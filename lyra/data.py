@@ -31,4 +31,7 @@ class PackedTextDataset(IterableDataset):
                     while len(buf)>=self.seq_len+1:
                         chunk=buf[:self.seq_len+1]; lab=targets[:self.seq_len+1]
                         del buf[:self.seq_len]; del targets[:self.seq_len]
+                        # Avoid optimizer steps on windows containing only
+                        # masked user/system targets during assistant-only SFT.
+                        if self.assistant_only and not any(x!=-100 for x in lab[1:]): continue
                         yield {'input_ids':torch.tensor(chunk[:-1],dtype=torch.long),'labels':torch.tensor(lab[:-1],dtype=torch.long)}

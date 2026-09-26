@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: lyra
+Version: 0.1.0
+Summary: Lyra 0.1 conversation-first language model and training pipeline
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: torch>=2.2
+Requires-Dist: tokenizers>=0.19
+Requires-Dist: numpy>=1.26
+Requires-Dist: fastapi>=0.110
+Requires-Dist: pydantic>=2.0
+Requires-Dist: uvicorn>=0.27
+Provides-Extra: data
+Requires-Dist: datasets>=3.0; extra == "data"
+Requires-Dist: huggingface-hub>=0.25; extra == "data"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+
 # Lyra 0.1
 
 Lyra is a small, conversation-first decoder-only language model trained from random initialization. It does not load Qwen/Llama/GPT or any other pretrained model weights. Its goal is ordinary Russian/English dialogue, short-term context and natural response length; its capabilities depend on actual training and are not implied by its parameter count.

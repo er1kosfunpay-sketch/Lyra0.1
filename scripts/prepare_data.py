@@ -1,6 +1,6 @@
 ﻿"""License-aware Hugging Face ingestion and quality-controlled conversation build.
 
-Dependencies: pip install -e .[data] (datasets, huggingface_hub, pyarrow)
+Dependencies: python -m pip install -e ".[data]" (datasets, huggingface_hub)
 """
 import argparse,hashlib,json,random
 from collections import Counter

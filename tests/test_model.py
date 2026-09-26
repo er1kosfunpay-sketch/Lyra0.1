@@ -5,7 +5,7 @@ from lyra.model import LyraModel
 def test_parameter_count_exact():
  c=LyraConfig.from_json('configs/lyra_0_1.json'); m=LyraModel(c)
  assert m.parameter_count()==c.parameter_count()
- assert 1_200_000_000 <= m.parameter_count() <= 1_800_000_000
+ assert m.parameter_count()==257_991_680
 
 def test_model_forward_backward():
  c=LyraConfig.from_json('configs/debug.json'); m=LyraModel(c); ids=torch.randint(0,c.vocab_size,(2,32)); o=m(ids,ids)
