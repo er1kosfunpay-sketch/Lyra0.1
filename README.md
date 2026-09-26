@@ -25,10 +25,12 @@ For runtime-only use without data preparation or tests, install the core package
 Build selected data:
 
 ```bash
-python scripts/prepare_data.py --out data/processed --max-per-source 50000 --ru-share 0.5
+python scripts/prepare_data.py --out data/processed --max-per-source 50000 --balance auto
 ```
 
-Default sources are human-rated OpenAssistant English/Russian branches and a capped, filtered UltraChat SFT supplement. UltraChat is English, synthetic and task-heavy, so it is not the sole or dominant style source. The builder reconstructs one preferred OASST branch from ratings, checks roles/language/text, removes exact/format duplicates, and creates deterministic train/validation/test files. It balances languages **without duplicating Russian**; if there are insufficient examples in either language, check the generated counts rather than assuming 50/50.
+Default sources are OASST, SiberianPersonaChat-2, Russian Everyday Dialogues, and capped UltraChat, plus the small repo-authored examples. Each source is independently cached and saved before the next source starts. A recoverable source failure is recorded in `build_status.json` and remaining sources continue. UltraChat is optional and can be skipped with `--skip-sources ultra`; for example `python scripts/prepare_data.py --sources oasst,siberian,ultra --skip-sources ultra`. Siberian rows require parsed multi-turn Russian exchanges and pass repetition/template filters.
+
+Language balancing defaults to `--balance auto`: use every accepted unique example without oversampling or throwing away the majority language. To request strict no-replacement 50/50 sampling, pass `--balance fixed --ru-share 0.5`. Preparation writes per-source resumable caches under `data/cache/processed/`, intermediate files and partial split snapshots after each source, atomically replaces JSONL/JSON outputs, and records source status/errors in `build_status.json` and `dataset_stats.json`. Completed caches are reused automatically; `--resume-data` makes that intent explicit, while `--refresh-sources` deliberately reprocesses sources.
 
 DailyDialog is human-written everyday English dialogue, but its CC BY-NC-SA 4.0 license is non-commercial/share-alike. It is excluded unless explicitly opted in:
 
@@ -36,7 +38,7 @@ DailyDialog is human-written everyday English dialogue, but its CC BY-NC-SA 4.0 
 python scripts/prepare_data.py --include-daily-nc
 ```
 
-This implies non-commercial-use restrictions and possible share-alike obligations. The data builder also includes a dozen repo-authored identity/context/unknown-answer examples, clearly tagged. Optional SiberianPersonaChat is off by default because the card's examples look templated and its authorship is unclear. Do not publish a model trained on a mixed-license corpus without reviewing each source's terms.
+This emits a warning and marks `NON-COMMERCIAL DATASET INCLUDED` in generated statistics because of non-commercial-use restrictions and possible share-alike obligations. Do not publish a model trained on a mixed-license corpus without reviewing each source's terms.
 
 Tokenizer must be trained on the training split only:
 

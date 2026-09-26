@@ -6,7 +6,7 @@ SOURCES={
  "kukunechka/russian-everyday-dialogues":{"revision":"main","license":"cc-by-4.0","languages":["ru"],"use":"Small native-authored everyday dialogue seed; retain attribution.","url":"https://huggingface.co/datasets/kukunechka/russian-everyday-dialogues"},
  "roskoN/dailydialog":{"revision":"main","license":"cc-by-nc-sa-4.0","languages":["en"],"use":"Optional non-commercial only; human-written daily dialogues; preserve license and attribution.","url":"https://huggingface.co/datasets/roskoN/dailydialog"},
  "HuggingFaceH4/ultrachat_200k":{"revision":"main","license":"mit","languages":["en"],"use":"Capped SFT-only supplement; synthetic ChatGPT-generated instructional multi-turn text, filter long prompts.","url":"https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k"},
- "SiberiaSoft/SiberianPersonaChat-2":{"revision":"main","license":"mit","languages":["ru"],"use":"Candidate only; persona/dialogue structure, manual audit and strict cap before training.","url":"https://huggingface.co/datasets/SiberiaSoft/SiberianPersonaChat-2"}}
+ "SiberiaSoft/SiberianPersonaChat-2":{"revision":"main","license":"mit","languages":["ru"],"use":"Default Russian supplement parsed to multi-turn dialogue; reject QA, persona scaffolding, low-turn, repeated-message and repeated-prompt rows.","url":"https://huggingface.co/datasets/SiberiaSoft/SiberianPersonaChat-2"}}
 def file_hash(p):
  h=hashlib.sha256()
  with open(p,'rb') as f:

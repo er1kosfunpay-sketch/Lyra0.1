@@ -18,6 +18,7 @@
   "gradient_checkpointing": true,
   "training": {
     "require_cuda": true,
+    "data_sources": "oasst,siberian,ru_everyday,ultra",
     "tokenizer": "/content/drive/MyDrive/Lyra/tokenizer/tokenizer.json",
     "data": "/content/drive/MyDrive/Lyra/datasets/lyra_v01/train.jsonl",
     "validation": "/content/drive/MyDrive/Lyra/datasets/lyra_v01/validation.jsonl",
