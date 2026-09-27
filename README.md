@@ -95,6 +95,12 @@ python training/train.py --config configs/colab.json \
 
 The notebook selects microbatch/gradient accumulation from detected GPU: conservative T4/P100/V100 profile 1/32; L4/A10 profile 1/16; A100 40GB profile 2/8. All use sequence length 1024 and gradient checkpointing; trainer picks BF16 where supported, otherwise FP16 with scaling. Treat these as starting values and monitor actual VRAM.
 
+### Kaggle Notebook GPU training
+
+Kaggle is also supported with the existing training pipeline. Open [`kaggle/train_lyra.ipynb`](kaggle/train_lyra.ipynb) in Kaggle, set **Settings → Accelerator → GPU** (T4 x2 where available), enable Internet, and run the cells in order. It clones/updates this repository, installs `.[data,dev]`, prepares or discovers data, checks the 16,384-token tokenizer, runs GPU/model sanity checks, then starts pretraining. Defaults are 2,000 steps, microbatch 1, gradient accumulation 8, 1,024 context, BF16 where supported or FP16 with GradScaler, and checkpoint/evaluation intervals of 100/250 steps. See [`kaggle/README.md`](kaggle/README.md) for exact UI and resume instructions.
+
+The Kaggle trainer uses GPU 0 (it does not automatically distribute across both T4s). Checkpoints go to `/kaggle/working/Lyra0.1/checkpoints/stage1_1300/`, with three rolling step checkpoints plus `latest.pt` and `best.pt`. Kaggle retains notebook output after saving a notebook version (up to 20 GB); attach that prior Notebook Output as an input in the next session to resume automatically. A changed dataset may be resumed with `--allow-dataset-change`, which preserves optimizer/scheduler/step while continuing to enforce model and tokenizer compatibility.
+
 ## Evaluation / inference
 
 `lyra/evaluation/chat_benchmark_0_1.jsonl` has 134 fixed bilingual test conversations covering greetings, daily chat, context memory, emotion, uncertainty, identity, concise flow and disagreement. `scripts/evaluate_chat.py` saves genuine generated outputs for human rating. It does not manufacture naturalness scores. Never train on this benchmark file.

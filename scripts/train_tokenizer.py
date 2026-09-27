@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory() as td:
  corpus=Path(td)/'corpus.txt'
  with corpus.open('w',encoding='utf8') as out:
   for src in files:
-   with open(src,encoding='utf8-sig',errors='replace') as f:
+   with open(src,encoding='utf-8-sig',errors='replace') as f:
     for line in f:
      try: row=json.loads(line)
      except json.JSONDecodeError: out.write(line); continue

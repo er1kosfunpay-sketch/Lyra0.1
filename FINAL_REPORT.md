@@ -46,3 +46,12 @@ This report reflects artifacts actually present on 2026-09-26. The project is **
 3. Run the pretraining cell; rerunning after a disconnect resumes from `/content/drive/MyDrive/Lyra/checkpoints/latest.pt`. The optional SFT cell has its own persistent checkpoint directory and resume logic.
 
 The training pipeline, evaluation prompts, Colab notebook, and export/inference/API code are in place. Local CPU unit tests pass; local environment has no CUDA, and full GPU training is configured for Google Colab. Semantic near-duplicate detection and precise file/row cursor checkpointing are not implemented. A Colab GPU profile, full training run, or benchmark output has not yet been observed.
+
+## Kaggle training path (added 2026-09-27)
+
+- Added `kaggle/train_lyra.ipynb`, `kaggle/README.md`, and `configs/kaggle.json`; the notebook reuses the existing `scripts/train.py` / `LyraModel`, GPU 0, BF16 where supported or FP16 + GradScaler, 1,024 context, microbatch 1, gradient accumulation 8, and 2,000-step pretrain defaults.
+- Kaggle output goes under `/kaggle/working/Lyra0.1/`; notebook versions can persist up to 20 GB of `/kaggle/working` output. A later session attaches the saved Notebook Output as input to restore `latest.pt` and the training JSONL history. Actual Kaggle GPU execution and persistence have **not** been tested from this development environment.
+- Checkpoints now verify the serialized temporary file before atomic replace and include stage and dataset metadata. Step archives rotate to the requested last-N count; `latest.pt` and `best.pt` are never pruned. Dataset-changed resume is opt-in via `--allow-dataset-change` and still enforces model/config/tokenizer compatibility.
+- Verified locally with a two-step tiny debug-model CPU run, checkpoint loading, same-stage resume through step 3, and `--reset-stage --stage sft` starting at step 1. This is pipeline verification, not Lyra 258M training.
+- Fixed the invalid `utf8-sig` codec name in `scripts/train_tokenizer.py`, which surfaced during the tokenizer smoke run.
+- Project suite: **15 passed** after the changes. Kaggle notebook JSON and every code cell parse successfully; Kaggle execution remains NOT TESTED.

@@ -37,12 +37,15 @@ def main():
     if a.sanity:
         tiny = LyraConfig.from_json('configs/debug.json')
         m = LyraModel(tiny).to('cuda' if cuda else 'cpu')
+        optimizer = torch.optim.AdamW(m.parameters(), lr=1e-4)
         x = torch.randint(0, tiny.vocab_size, (2, min(32, tiny.context_length)))
         y = x.clone()
+        optimizer.zero_grad(set_to_none=True)
         loss = m(x, y)['loss']
         loss.backward()
+        optimizer.step()
         assert torch.isfinite(loss).item()
-        print(json.dumps({'tiny_sanity': 'PASS', 'parameters': m.parameter_count(), 'loss': float(loss)}))
+        print(json.dumps({'tiny_sanity': 'PASS', 'forward': 'PASS', 'backward': 'PASS', 'optimizer': 'PASS', 'parameters': m.parameter_count(), 'loss': float(loss)}))
 
 if __name__ == '__main__':
     main()

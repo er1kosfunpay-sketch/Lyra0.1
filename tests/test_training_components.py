@@ -11,7 +11,10 @@ def test_generation_token_loop():
 
 def test_checkpoint_resume_and_compatibility(tmp_path):
  c=LyraConfig.from_json('configs/debug.json'); m=LyraModel(c); opt=torch.optim.AdamW(m.parameters()); ids=torch.randint(0,c.vocab_size,(1,16)); m(ids,ids)['loss'].backward(); opt.step()
- path=tmp_path/'latest.pt'; save_checkpoint(path,m,opt,c,step=3,tokens_seen=48,tokenizer_fingerprint='tok',dataset_version='ds')
+ path=tmp_path/'latest.pt'; save_checkpoint(path,m,opt,c,step=3,tokens_seen=48,tokenizer_fingerprint='tok',dataset_version='ds',stage='pretrain',dataset_info={'train_examples':12})
+ saved=torch.load(path,map_location='cpu',weights_only=False)
+ assert saved['stage']=='pretrain' and saved['metadata']['dataset_info']['train_examples']==12
+ assert not path.with_suffix('.pt.tmp').exists()
  m2=LyraModel(c); opt2=torch.optim.AdamW(m2.parameters()); step,tokens,best=load_checkpoint(path,m2,opt2,c,'tok',dataset_version='ds')
  assert (step,tokens,best)==(3,48,None)
  for k,v in m.state_dict().items(): assert torch.equal(v,m2.state_dict()[k])

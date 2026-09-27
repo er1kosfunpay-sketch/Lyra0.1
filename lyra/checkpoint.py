@@ -1,5 +1,5 @@
 ﻿"""Portable, compatibility-checked checkpoints with optimizer and RNG state."""
-import hashlib,json,random,subprocess
+import hashlib,json,random,subprocess,os
 from pathlib import Path
 import numpy as np
 import torch
@@ -8,10 +8,20 @@ def fingerprint(obj): return hashlib.sha256(json.dumps(obj,sort_keys=True).encod
 def git_commit():
     try: return subprocess.check_output(["git","rev-parse","HEAD"],stderr=subprocess.DEVNULL,text=True).strip()
     except Exception: return "uncommitted"
-def save_checkpoint(path,model,optimizer,config,step,tokens_seen,tokenizer_fingerprint,dataset_version="unspecified",scaler=None,scheduler=None,epoch=0,best_validation_loss=None):
+def save_checkpoint(path,model,optimizer,config,step,tokens_seen,tokenizer_fingerprint,dataset_version="unspecified",scaler=None,scheduler=None,epoch=0,best_validation_loss=None,stage="pretrain",dataset_info=None):
     path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
-    payload={"model":model.state_dict(),"optimizer":optimizer.state_dict(),"scheduler":scheduler.state_dict() if scheduler else None,"scaler":scaler.state_dict() if scaler else None,"config":config.to_dict(),"step":step,"epoch":epoch,"tokens_seen":tokens_seen,"best_validation_loss":best_validation_loss,"metadata":{"model_name":config.model_name,"model_version":config.version,"git_commit":git_commit(),"config_hash":fingerprint(config.to_dict()),"tokenizer_fingerprint":tokenizer_fingerprint,"dataset_version":dataset_version},"rng":{"python":random.getstate(),"numpy":np.random.get_state(),"torch":torch.get_rng_state(),"cuda":torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None}}
-    tmp=path.with_suffix(path.suffix+".tmp"); torch.save(payload,tmp); tmp.replace(path)
+    payload={"model":model.state_dict(),"optimizer":optimizer.state_dict(),"scheduler":scheduler.state_dict() if scheduler else None,"scaler":scaler.state_dict() if scaler else None,"config":config.to_dict(),"step":step,"epoch":epoch,"tokens_seen":tokens_seen,"best_validation_loss":best_validation_loss,"stage":stage,"metadata":{"model_name":config.model_name,"model_version":config.version,"git_commit":git_commit(),"config_hash":fingerprint(config.to_dict()),"tokenizer_fingerprint":tokenizer_fingerprint,"dataset_version":dataset_version,"dataset_info":dataset_info or {}},"rng":{"python":random.getstate(),"numpy":np.random.get_state(),"torch":torch.get_rng_state(),"cuda":torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None}}
+    tmp=path.with_suffix(path.suffix+".tmp")
+    try:
+        with tmp.open("wb") as f:
+            torch.save(payload,f); f.flush(); os.fsync(f.fileno())
+        if not tmp.is_file() or tmp.stat().st_size == 0: raise IOError(f"Checkpoint write was empty: {tmp}")
+        # Read back before replacing the last known-good checkpoint.
+        checked=torch.load(tmp,map_location="cpu",weights_only=False)
+        if checked.get("step") != step or "model" not in checked: raise IOError(f"Checkpoint verification failed: {tmp}")
+        os.replace(tmp,path)
+    finally:
+        if tmp.exists(): tmp.unlink()
 def load_checkpoint(path,model,optimizer,config,tokenizer_fingerprint,scaler=None,scheduler=None,strict=True,dataset_version=None):
     ckpt=torch.load(path,map_location="cpu",weights_only=False); m=ckpt["metadata"]
     expected={"model_name":config.model_name,"model_version":config.version,"config_hash":fingerprint(config.to_dict()),"tokenizer_fingerprint":tokenizer_fingerprint}
