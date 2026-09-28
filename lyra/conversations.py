@@ -44,16 +44,26 @@ def duplicate_key(messages):
     words=re.sub(r"[^\w\s]"," ",words,flags=re.UNICODE)
     return hashlib.sha256(" ".join(words.split()).encode()).hexdigest()
 def stats(rows):
-    turns=[]; responses=[]; users=[]; langs=Counter(); nmsg=0
+    turns=[]; responses=[]; users=[]; conv_chars=[]; langs=Counter(); nmsg=0
+    nuser=0; nasst=0
     for row in rows:
         ms=row["messages"]; nmsg+=len(ms); turns.append(sum(m["role"] in {"user","assistant"} for m in ms))
         langs[row.get("lang","unknown")]+=1
         responses.extend(len(m["content"]) for m in ms if m["role"]=="assistant")
         users.extend(len(m["content"]) for m in ms if m["role"]=="user")
+        conv_chars.append(sum(len(m["content"]) for m in ms))
+        nuser += sum(1 for m in ms if m["role"]=="user")
+        nasst += sum(1 for m in ms if m["role"]=="assistant")
     def med(v):
         if not v:return 0
         s=sorted(v); return s[len(s)//2]
     def percentiles(v):
         if not v:return {"p25":0,"p50":0,"p75":0,"p90":0}
         s=sorted(v); return {f"p{p}":s[min(len(s)-1,int((p/100)*(len(s)-1)))] for p in (25,50,75,90)}
-    return {"conversations":len(rows),"messages":nmsg,"average_turns":sum(turns)/len(turns) if turns else 0,"median_turns":med(turns),"max_turns":max(turns,default=0),"language_conversations":dict(langs),"assistant_response_chars_mean":sum(responses)/len(responses) if responses else 0,"assistant_response_chars_percentiles":percentiles(responses),"user_message_chars_mean":sum(users)/len(users) if users else 0,"user_message_chars_percentiles":percentiles(users)}
+    return {"conversations":len(rows),"messages":nmsg,"user_messages":nuser,"assistant_messages":nasst,
+            "average_turns":sum(turns)/len(turns) if turns else 0,"median_turns":med(turns),"max_turns":max(turns,default=0),
+            "language_conversations":dict(langs),"assistant_response_chars_mean":sum(responses)/len(responses) if responses else 0,
+            "assistant_response_chars_percentiles":percentiles(responses),"user_message_chars_mean":sum(users)/len(users) if users else 0,
+            "user_message_chars_percentiles":percentiles(users),
+            "conversation_chars_mean":sum(conv_chars)/len(conv_chars) if conv_chars else 0,
+            "conversation_chars_percentiles":percentiles(conv_chars),"messages_per_conversation_mean":sum(turns)/len(turns) if turns else 0}

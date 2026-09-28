@@ -28,9 +28,12 @@ SOURCES = {
     "ultra": ("HuggingFaceH4/ultrachat_200k", "mit", "Synthetic English assistant conversations; capped optional supplement."),
     "daily": ("roskoN/dailydialog", "cc-by-nc-sa-4.0", "Optional non-commercial/share-alike English daily dialogue."),
     "curated": ("lyra/identity_and_honesty_v0.1", "project-authored", "Repository-authored bilingual examples."),
+    "ru_chat": ("Den4ikAI/russian_dialogues_2", "mit", "Multi-turn Russian Telegram dialogue chains; conversational, short-form; quality filtered."),
+    "discord": ("mookiezi/Discord-Dialogues", "apache-2.0", "Human-only English Discord conversations (TOS-filtered, links removed); conversational."),
 }
-DEFAULT_SOURCES = "oasst,siberian,ru_everyday,ultra"
-CACHE_SCHEMA = 3
+DEFAULT_SOURCES = "oasst,ru_chat,discord,siberian,ru_everyday,ultra"
+DEFAULT_LIMITS = {"ru_chat": 150000, "discord": 50000}
+CACHE_SCHEMA = 4
 REVISION: dict[str, str] = {}
 SIBERIAN_MARKER = re.compile(r"(?:\u041d\u0435\u0434\u0430\u0432\u043d\u043e\s*,?\s*\u0443\s*\u043c\u0435\u043d\u044f\s*\u0431\u044b\u043b\s*\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439\s*\u0434\u0438\u0430\u043b\u043e\u0433\s*:|\u0434\u0438\u0430\u043b\u043e\u0433\s*:)", re.I)
 SIBERIAN_TURN = re.compile(r"(?<!\w)(\u0422\u044b|\u042f)\s*:\s*", re.I)
@@ -38,6 +41,58 @@ SIBERIAN_TEMPLATE = re.compile(
     r"(?:\u044f\s+(?:\u043e\u0447\u0435\u043d\u044c\s+\u0443\u043c\u043d\u0430\u044f|\u043f\u0430\u0440\u0435\u043d\u044c\s*,?\s*\u043a\u043e\u043d\u0441\u0443\u043b\u044c\u0442\u0430\u043d\u0442)|\u0432\s+\u044d\u0442\u043e\u043c\s+\u0440\u0430\u0437\u0433\u043e\u0432\u043e\u0440\u0435\s+\u0442\u044b\s+\u0431\u0443\u0434\u0435\u0448\u044c)",
     re.I,
 )
+
+
+# ChatML bodies used by mookiezi/Discord-Dialogues.
+CHATML_ROLE = re.compile(r"<\|im_start\|>(user|assistant)\n", re.S)
+CHATML_END = re.compile(r"<\|im_end\|>")
+# Light profanity filter for casual chat quality (drops heavy profanity, keeps mild speech).
+PROFANITY_RE = re.compile(
+    r"\b(?:х[уеёй]{1,3}|пизд|бляд|блят|е[а-яё]б[а-яё]|[а-яё]ё[бв]а[тс]|сука[а-яё]?|го[вв]?но|д[оа]бо[её]б|мудак|дроч|х[её]р[а-яё]{0,3}|пидор)\b",
+    re.I,
+)
+EN_PROFANITY_RE = re.compile(r"\b(?:fuck|shit|bitch|asshole|cunt|nigg[a-z]*|dick|puss[yi]|cock)\b", re.I)
+
+
+def parse_chatml(text: str) -> list[dict[str, str]] | None:
+    """Turn a ChatML exchange into alternating user/assistant messages."""
+    if not isinstance(text, str) or "\ufffd" in text:
+        return None
+    messages: list[dict[str, str]] = []
+    for m in CHATML_ROLE.finditer(text):
+        role = m.group(1)
+        body_start = m.end()
+        nxt = len(text)
+        for marker in ("<|im_start|>", "<|im_end|>"):
+            pos = text.find(marker, body_start)
+            if 0 < pos < nxt:
+                nxt = pos
+        body = text[body_start:nxt].strip()
+        if body and body != "|":
+            messages.append({"role": role, "content": clean_text(body)})
+    return messages if 4 <= len(messages) <= 20 else None
+
+
+def profanity_ratio(messages: list[dict[str, str]]) -> float:
+    total = len(messages)
+    if not total:
+        return 0.0
+    bad = 0
+    for m in messages:
+        t = m.get("content", "")
+        if PROFANITY_RE.search(t) or EN_PROFANITY_RE.search(t):
+            bad += 1
+    return bad / total
+
+
+def reservoir_sample(iterable, limit: int, rng: random.Random) -> list:
+    chosen: list = []
+    for i, item in enumerate(iterable, start=1):
+        if len(chosen) < limit:
+            chosen.append(item)
+        elif rng.random() < limit / i:
+            chosen[rng.randrange(len(chosen))] = item
+    return chosen
 
 
 def atomic_json(path: Path, obj: Any) -> None:
@@ -127,6 +182,53 @@ def parse_siberian_dialogue(prompt: str, answer: str, category: str = "") -> lis
     return messages or None
 
 
+def _read_russian_dialogues(src: Path) -> Iterable[dict[str, Any]]:
+    """Stream short Telegram chains, alternately assigning user/assistant roles."""
+    with gzip.open(src, "rt", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            sample = rec.get("sample")
+            if not isinstance(sample, list) or not (4 <= len(sample) <= 14):
+                continue
+            messages = normalize([{"role": "user" if k % 2 == 0 else "assistant", "content": t} for k, t in enumerate(sample) if isinstance(t, str)])
+            if messages and len(messages) == len(sample):
+                yield {"messages": messages, "lang": "ru", "source": "ru_chat"}
+
+
+def _read_discord(pf, limit: int, rng: random.Random) -> list[dict[str, Any]]:
+    """Stream cleaned Discord ChatML exchanges (pre-filtered by turns/characters) with reservoir sampling."""
+    chosen: list[dict[str, Any]] = []
+    n = 0
+    for batch in pf.iter_batches(batch_size=8192, columns=["text", "turns", "characters"]):
+        for txt, turns, chars in zip(batch.column("text").to_pylist(), batch.column("turns").to_pylist(), batch.column("characters").to_pylist()):
+            n += 1
+            if not isinstance(turns, int) or not (4 <= turns <= 20) or not isinstance(chars, int) or chars > 4000 or "\ufffd" in txt:
+                continue
+            messages = parse_chatml(txt)
+            if not messages:
+                continue
+            item = {"messages": messages, "lang": "en", "source": "discord"}
+            if len(chosen) < limit:
+                chosen.append(item)
+            elif rng.random() < limit / n:
+                chosen[rng.randrange(len(chosen))] = item
+    return chosen
+
+
+def classify_rejection(raw: dict, source: str) -> str | None:
+    if not isinstance(raw, dict):
+        return "not_a_record"
+    messages = raw.get("messages")
+    if not isinstance(messages, list):
+        return "no_messages"
+    if len(messages) < 2:
+        return "too_short"
+    return None
+
+
 def rows(source: str, limit: int) -> Iterable[dict[str, Any]]:
     """Yield source records; source-specific network and parser errors bubble to caller."""
     if source == "oasst":
@@ -191,6 +293,35 @@ def rows(source: str, limit: int) -> Iterable[dict[str, Any]]:
                 messages = normalize([{"role": "user", "content": row.get("user", "")}, {"role": "assistant", "content": row.get("assistant", "")}])
                 if messages:
                     yield {"messages": messages, "lang": "ru", "source": source, "attribution": row.get("attribution", "")}
+
+    elif source in ("ru_chat",):
+        repo = SOURCES[source][0]
+        local = Path("data/cache/russian_dialogues_2.jsonl.gz")
+        if local.exists():
+            REVISION[repo] = "8ce8d669a3f749ec8aa03ea01c475012ef210866"
+            src = local
+        else:
+            revision = pin(repo)
+            from huggingface_hub import hf_hub_download
+            src = Path(hf_hub_download(repo_id=repo, filename="dataset.jsonl.gz", repo_type="dataset", revision=revision, cache_dir="data/cache"))
+        rng = random.Random(2026 + hash(source))
+        for item in reservoir_sample(_read_russian_dialogues(src), max(limit, DEFAULT_LIMITS.get(source, limit)), rng):
+            yield item
+
+    elif source in ("discord",):
+        repo = SOURCES[source][0]
+        local = Path("data/cache/discord_dialogues_train.parquet")
+        if local.exists():
+            REVISION[repo] = "0dddee27a99a0741e730a5e84472b4a730add4e1f456676f02999ee2cc100569"
+        else:
+            revision = pin(repo)
+            from huggingface_hub import hf_hub_download
+            local = Path(hf_hub_download(repo_id=repo, filename="data/train.parquet", repo_type="dataset", revision=revision, cache_dir="data/cache"))
+        import pyarrow.parquet as pq
+        rng = random.Random(2026 + hash(source))
+        pf = pq.ParquetFile(str(local))
+        for item in reservoir_sample(_read_discord(pf, max(limit, DEFAULT_LIMITS.get(source, limit)), rng), max(limit, DEFAULT_LIMITS.get(source, limit)), rng):
+            yield item
 
     elif source in ("ultra", "daily", "siberian"):
         from datasets import load_dataset
@@ -289,6 +420,12 @@ def clean_source_row(raw: dict[str, Any], source: str) -> dict[str, Any] | None:
             return None
         if lang != "ru":
             return None
+    if source in ("ru_chat", "discord"):
+        text = " ".join(m["content"] for m in messages)
+        if len(text) > 4000 or any(len(m["content"]) > 1000 for m in messages):
+            return None
+        if messages and profanity_ratio(messages) >= 0.3:
+            return None
     if source == "ultra" and lang != "en":
         return None
     row = {"messages": messages, "lang": lang, "source": source}
@@ -384,8 +521,9 @@ def build_dataset(rows_: list[dict[str, Any]], out: Path, mode: str, ru_share: f
         "source_conversations_before_balance": dict(Counter(r["source"] for r in rows_)),
         "source_conversations_after_balance": dict(Counter(r["source"] for r in selected)),
         "accepted_before_balance": len(rows_), "accepted_after_balance": len(selected),
-        "filtered_after_extraction": sum(int((source_status.get(s) or {}).get("filtered", 0)) for s in source_names),
-        "duplicates_after_normalization": sum(int((source_status.get(s) or {}).get("duplicates", 0)) for s in source_names),
+        "invalid_rejected_total": sum(int((source_status.get(s) or {}).get("filtered", 0)) for s in source_names),
+        "duplicates_removed_total": sum(int((source_status.get(s) or {}).get("source_duplicates", 0)) for s in source_names),
+        "rejections_by_source": {s: (source_status.get(s) or {}).get("rejections", {}) for s in source_names},
         "splits": {name: stats(subset) for name, subset in splits.items()},
         "note": "Auto balance retains all unique accepted conversations without oversampling or language-based downsampling. Fixed balance samples without replacement. Per-source download failures are reported in source_status."
     }
@@ -397,12 +535,25 @@ def parse_names(value: str) -> list[str]:
     return list(dict.fromkeys(x.strip() for x in value.split(",") if x.strip()))
 
 
+def resolve_limits(args) -> dict[str, int]:
+    """Map each source to its effective cap."""
+    plain = int(str(args.max_per_source).split(",")[0].lstrip("-"))
+    overrides: dict[str, int] = {}
+    for part in str(args.max_per_source).split(","):
+        part = part.strip()
+        if "=" in part:
+            k, v = part.split("=", 1)
+            overrides[k.strip()] = int(v.strip())
+    return {src: overrides.get(src, plain) for src in SOURCES}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="data/processed")
     parser.add_argument("--sources", default=DEFAULT_SOURCES)
     parser.add_argument("--skip-sources", default="", help="Comma-separated optional sources to omit, e.g. ultra")
-    parser.add_argument("--max-per-source", type=int, default=50000)
+    parser.add_argument("--max-per-source", default="50000",
+                        help="Limit per source as a plain integer, or comma pairs like '50000,ru_chat=150000,discord=50000'. Built-in limits apply to new sources unless overridden.")
     parser.add_argument("--balance", choices=("auto", "fixed"), default=None)
     parser.add_argument("--ru-share", default="auto", help="auto by default; use a float such as 0.5 to request a fixed ratio")
     parser.add_argument("--include-daily-nc", action="store_true")
@@ -411,7 +562,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refresh-sources", action="store_true", help="Ignore completed source caches and fetch/process those sources again")
     parser.add_argument("--seed", type=int, default=17)
     args = parser.parse_args(argv)
-    if args.max_per_source <= 0:
+    try:
+        _base = int(str(args.max_per_source).lstrip("-").split(",")[0])
+    except ValueError:
+        parser.error("--max-per-source must be a positive integer")
+    if _base <= 0:
         parser.error("--max-per-source must be positive")
 
     names = parse_names(args.sources)
@@ -449,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--ru-share with a numeric ratio conflicts with --balance auto; use --balance fixed")
         mode = "fixed"
 
+    limits = resolve_limits(args)
     out = Path(args.out)
     cache_dir = Path("data/cache/processed")
     intermediate = out / "intermediate"
@@ -483,14 +639,14 @@ def main(argv: list[str] | None = None) -> int:
     def publish_partial() -> None:
         all_rows, _ = current_unique_rows()
         metadata = build_dataset(all_rows, out, mode, ru_share, args.seed, status["sources"], names,
-                                 args.max_per_source, "daily" in names)
+                                 max(limits.values()), "daily" in names)
         if metadata:
             status["dataset_state"] = "PARTIAL" if any(s.get("status") == "SOURCE_FAILED" for s in status["sources"].values()) else "READY"
             status["dataset_version"] = metadata["dataset_version"]
         atomic_status(status_path, status)
 
     for source in names:
-        cached = None if args.refresh_sources else read_complete_cache(cache_dir, source, args.max_per_source)
+        cached = None if args.refresh_sources else read_complete_cache(cache_dir, source, limits[source])
         if cached is not None:
             cached_rows, cache_meta = cached
             source_rows[source] = cached_rows
@@ -503,15 +659,23 @@ def main(argv: list[str] | None = None) -> int:
 
         staged: list[dict[str, Any]] = []
         rejected = candidates = source_duplicates = 0
+        rejections: dict[str, int] = Counter()
         seen_siberian_prompts: set[str] = set()
         seen_source_conversations: set[str] = set()
         source_error: Exception | None = None
         try:
-            for raw in rows(source, args.max_per_source):
+            for raw in rows(source, limits[source]):
                 candidates += 1
+                rej = classify_rejection(raw, source)
+                if rej is not None:
+                    rejections[rej] += 1
+                    rejected += 1
+                    continue
                 normalized = clean_source_row(raw, source)
                 if normalized is None:
+                    rejections["filter"] += 1
                     rejected += 1
+                    continue
                 else:
                     key = duplicate_key(normalized["messages"])
                     if key in seen_source_conversations:
@@ -535,10 +699,10 @@ def main(argv: list[str] | None = None) -> int:
             # Cache and intermediate artifact become visible only after the
             # entire source completed. A kill during download leaves prior
             # sources intact and an incomplete temporary file is never reused.
-            cache_meta = write_source_cache(cache_dir, source, staged, args.max_per_source, candidates, rejected, source_duplicates)
+            cache_meta = write_source_cache(cache_dir, source, staged, limits[source], candidates, rejected, source_duplicates)
             source_rows[source] = staged
             atomic_jsonl(intermediate / f"{source}.jsonl", staged)
-            status["sources"][source] = {**cache_meta, "status": "SUCCESS", "filtered": rejected, "duplicates": source_duplicates}
+            status["sources"][source] = {**cache_meta, "status": "SUCCESS", "filtered": rejected, "duplicates": source_duplicates, "rejections": dict(rejections)}
             status[source] = "SUCCESS"
             print(f"Source {source}: SUCCESS ({len(staged)} accepted, {rejected} filtered)")
         else:
@@ -550,7 +714,7 @@ def main(argv: list[str] | None = None) -> int:
                 fallback_rows, cache_meta = cached_fallback
                 # A source that failed during refresh does not invalidate its
                 # previous successful copy. Keep that data in the partial build.
-                fallback_rows = fallback_rows[:args.max_per_source]
+                fallback_rows = fallback_rows[:limits[source]]
                 source_rows[source] = fallback_rows
                 record.update({"using_cached_data": True, "revision": cache_meta.get("revision"),
                                "license": cache_meta.get("license"), "accepted": len(fallback_rows)})
@@ -571,7 +735,7 @@ def main(argv: list[str] | None = None) -> int:
     status["build_state"] = "PARTIAL" if failed else "SUCCESS"
     status["failed_sources"] = failed
     metadata = build_dataset(all_rows, out, mode, ru_share, args.seed, status["sources"], names,
-                             args.max_per_source, "daily" in names)
+                             max(limits.values()), "daily" in names)
     if metadata is None:
         status["build_state"] = "FAILED_NO_SPLIT_DATA"
         atomic_status(status_path, status)
