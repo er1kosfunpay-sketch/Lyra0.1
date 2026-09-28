@@ -15,8 +15,8 @@ def test_checkpoint_resume_and_compatibility(tmp_path):
  saved=torch.load(path,map_location='cpu',weights_only=False)
  assert saved['stage']=='pretrain' and saved['metadata']['dataset_info']['train_examples']==12
  assert not path.with_suffix('.pt.tmp').exists()
- m2=LyraModel(c); opt2=torch.optim.AdamW(m2.parameters()); step,tokens,best=load_checkpoint(path,m2,opt2,c,'tok',dataset_version='ds')
- assert (step,tokens,best)==(3,48,None)
+ m2=LyraModel(c); opt2=torch.optim.AdamW(m2.parameters()); step,tokens,best,epoch=load_checkpoint(path,m2,opt2,c,'tok',dataset_version='ds')
+ assert (step,tokens,best,epoch)==(3,48,None,0)
  for k,v in m.state_dict().items(): assert torch.equal(v,m2.state_dict()[k])
  try: load_checkpoint(path,m2,opt2,c,'other',dataset_version='ds')
  except ValueError as e: assert 'tokenizer_fingerprint' in str(e)

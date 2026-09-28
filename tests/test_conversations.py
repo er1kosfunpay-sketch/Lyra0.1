@@ -13,3 +13,8 @@ def test_near_duplicate_fingerprint_normalizes_format():
  a=[{'role':'user','content':'Hello, there!'}, {'role':'assistant','content':'Nice to meet you.'}]
  b=[{'role':'user','content':'Hello there'}, {'role':'assistant','content':'Nice to meet you'}]
  assert duplicate_key(a)==duplicate_key(b)
+
+def test_chat_markers_are_stripped_from_bodies():
+ assert '<ASSISTANT>' not in clean_text('Hello <ASSISTANT> world')
+ assert '<USER>' not in clean_text('<USER> hi')
+ assert clean_text('Привет <END> пока')=='Привет пока'

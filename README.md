@@ -107,6 +107,7 @@ The Kaggle trainer uses GPU 0 (it does not automatically distribute across both 
 
 ```bash
 pytest
+python tests/run_all.py
 python scripts/evaluate_chat.py --model exports/lyra --out logs/benchmark_outputs.jsonl
 python scripts/export_model.py --config configs/lyra_0_1.json \
   --checkpoint checkpoints/sft/best.pt --tokenizer artifacts/tokenizer.json --out exports/lyra
@@ -114,6 +115,8 @@ python inference/chat.py --model exports/lyra
 ```
 
 `inference/chat.py` retains recent dialogue and streams decoded output; oldest user/assistant turns are discarded when the model context fills, keeping the system prompt. `inference/api.py` provides FastAPI `/health`, `/info`, `/generate`, `/chat`; it reports unavailable until a real compatible trained export is present. No fallback LLM is called.
+
+Chat format parity: training packs every turn as `<ROLE> body <END>` and inference builds the identical stream plus a trailing `<ASSISTANT>` trigger through `lyra.generation.format_chat` (defaults in `lyra.generation.GENERATION_DEFAULTS`). Message bodies are sanitized by `lyra.conversations.clean_text`, which also strips literal `<USER>`/`<ASSISTANT>`-style markers so neither scraped rows nor user input can inject fake role boundaries.
 
 Run the API after exporting a model with `python -m uvicorn inference.api:app --host 0.0.0.0 --port 8000`.
 

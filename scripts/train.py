@@ -37,17 +37,20 @@ def main():
   progress=min(1.0,(s-a.warmup_steps)/max(1,a.steps-a.warmup_steps)); return 0.5*(1+np.cos(np.pi*progress))
  sched=torch.optim.lr_scheduler.LambdaLR(opt,lr_scale)
  amp_dtype=torch.bfloat16 if device=='cuda' and torch.cuda.is_bf16_supported() else torch.float16
- scaler=torch.cuda.amp.GradScaler(enabled=(device=='cuda' and amp_dtype==torch.float16))
- step=tokens=0; best_val=float('inf')
+ try:
+  scaler=torch.amp.GradScaler('cuda',enabled=(device=='cuda' and amp_dtype==torch.float16))
+ except (AttributeError,TypeError):
+  scaler=torch.cuda.amp.GradScaler(enabled=(device=='cuda' and amp_dtype==torch.float16))
+ step=tokens=0; best_val=float('inf'); ckpt_epoch=0
  if a.resume is None and (Path(a.out)/'latest.pt').exists(): a.resume='latest'
  if a.resume and a.resume!='latest':
-  step,tokens,loaded_best=load_checkpoint(a.resume,model,opt,cfg,tfp,scaler,scheduler=None if a.reset_stage else sched,dataset_version=None if (a.reset_stage or a.allow_dataset_change) else dataset_version)
+  step,tokens,loaded_best,ckpt_epoch=load_checkpoint(a.resume,model,opt,cfg,tfp,scaler,scheduler=None if a.reset_stage else sched,dataset_version=None if (a.reset_stage or a.allow_dataset_change) else dataset_version)
   if a.reset_stage: step=0
   elif loaded_best is not None: best_val=loaded_best
  elif a.resume=='latest':
   latest=Path(a.out)/'latest.pt'
   if not latest.exists(): raise FileNotFoundError(f'--resume latest requested, but no checkpoint exists at {latest}')
-  step,tokens,loaded_best=load_checkpoint(latest,model,opt,cfg,tfp,scaler,scheduler=None if a.reset_stage else sched,dataset_version=None if (a.reset_stage or a.allow_dataset_change) else dataset_version)
+  step,tokens,loaded_best,ckpt_epoch=load_checkpoint(latest,model,opt,cfg,tfp,scaler,scheduler=None if a.reset_stage else sched,dataset_version=None if (a.reset_stage or a.allow_dataset_change) else dataset_version)
   if a.reset_stage: step=0
   elif loaded_best is not None: best_val=loaded_best
  if a.reset_stage:
@@ -59,6 +62,8 @@ def main():
   try: next(it)
   except StopIteration:
    epoch+=1; ds.set_epoch(epoch); it=iter(dl); next(it)
+ if (a.resume and not a.reset_stage) and epoch!=ckpt_epoch:
+  print(json.dumps({'warning':'resumed data epoch differs from checkpoint epoch','replayed_epoch':epoch,'checkpoint_epoch':ckpt_epoch}),flush=True)
  val_dataset=lambda: PackedTextDataset(val_files,tok,cfg.context_length,seed=a.seed,assistant_only=(a.stage=='sft'))
  val_it=iter(DataLoader(val_dataset(),batch_size=a.batch_size)) if val_files else None
  def batch_next(iterator,is_val=False):

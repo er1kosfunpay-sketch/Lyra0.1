@@ -47,6 +47,20 @@ This report reflects artifacts actually present on 2026-09-26. The project is **
 
 The training pipeline, evaluation prompts, Colab notebook, and export/inference/API code are in place. Local CPU unit tests pass; local environment has no CUDA, and full GPU training is configured for Google Colab. Semantic near-duplicate detection and precise file/row cursor checkpointing are not implemented. A Colab GPU profile, full training run, or benchmark output has not yet been observed.
 
+## Audit 2026-09-28 (full pipeline review, no GPU run)
+
+- Fixed critical train/inference mismatch: `inference/chat.py`, `inference/api.py` and `scripts/evaluate_chat.py` built prompts as `ROLE body` without the closing `<END>` the training packer emits. All inference now goes through `lyra.generation.format_chat` (`<ROLE> body <END> … <ASSISTANT>`), with shared defaults in `lyra.generation.GENERATION_DEFAULTS`.
+- `lyra.conversations.clean_text` now strips literal `<USER>`/`<ASSISTANT>`-style markers from message bodies (train and inference alike), closing a role-injection channel through the BPE backend.
+- `LyraConfig` defaults aligned to the real 258M profile (was a ~2B-parameter default config that would OOM any notebook GPU if instantiated bare).
+- `LyraModel.generate` repetition penalty made batch-safe and vectorized (was hardcoded to batch row 0 with a per-token Python loop).
+- `load_checkpoint` returns `epoch`; `scripts/train.py` warns if the replayed data epoch differs, and uses `torch.amp.GradScaler` with fallback for old PyTorch.
+- `scripts/train_tokenizer.py` preserves newlines in the BPE corpus (was collapsing them to spaces) and warns when input is not a train split.
+- All CLI scripts are import-safe (`main(argv)` + `__main__` guard); `inference/api.py` uses lifespan instead of deprecated `on_event`.
+- Added `tests/test_smoke.py` (tokenizer RU/EN/mixed/URL/newlines roundtrip, train/inference format parity, forward/loss, weight update, generation bounds, checkpoint fingerprint, fresh-process reload+generate, SFT masking) and `tests/run_all.py`.
+- Kaggle export cell now also writes `generation_config.json`, matching `scripts/export_model.py`.
+- Removed committed build garbage (`lyra.egg-info`, `__pycache__`, `.pytest_cache`); `*.egg-info/` added to `.gitignore`.
+- Local shell has no Python toolchain, so the suite was NOT executed here: run `python tests/run_all.py` on Kaggle/CI before training. Architecture (RMSNorm/RoPE/GQA/SwiGLU, assistant-only SFT masking, packing, checkpoint fingerprints) reviewed and kept as-is.
+
 ## Kaggle training path (added 2026-09-27)
 
 - Added `kaggle/train_lyra.ipynb`, `kaggle/README.md`, and `configs/kaggle.json`; the notebook reuses the existing `scripts/train.py` / `LyraModel`, GPU 0, BF16 where supported or FP16 + GradScaler, 1,024 context, microbatch 1, gradient accumulation 8, and 2,000-step pretrain defaults.

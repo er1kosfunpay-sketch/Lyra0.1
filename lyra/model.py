@@ -97,8 +97,12 @@ class LyraModel(nn.Module):
             else:
                 logits/=max(temperature,1e-6)
                 if repetition_penalty != 1.0:
-                    for token in set(input_ids[0].tolist()):
-                        logits[:,token]=torch.where(logits[:,token] > 0, logits[:,token]/repetition_penalty, logits[:,token]*repetition_penalty)
+                    # Batch-safe: penalize each row by its own seen tokens only,
+                    # vectorized over unique ids instead of a Python-level set loop.
+                    for i in range(input_ids.size(0)):
+                        uniq=torch.unique(input_ids[i])
+                        vals=logits[i,uniq]
+                        logits[i,uniq]=torch.where(vals > 0, vals/repetition_penalty, vals*repetition_penalty)
                 if top_k: vals,_=torch.topk(logits,min(top_k,logits.size(-1))); logits[logits<vals[:,-1,None]]=-float('inf')
                 if 0.0 < top_p < 1.0:
                     sorted_logits, sorted_idx = torch.sort(logits, descending=True)

@@ -33,4 +33,4 @@ def load_checkpoint(path,model,optimizer,config,tokenizer_fingerprint,scaler=Non
     if scheduler and ckpt.get("scheduler"): scheduler.load_state_dict(ckpt["scheduler"])
     random.setstate(ckpt["rng"]["python"]); np.random.set_state(ckpt["rng"]["numpy"]); torch.set_rng_state(ckpt["rng"]["torch"])
     if torch.cuda.is_available() and ckpt["rng"]["cuda"] is not None: torch.cuda.set_rng_state_all(ckpt["rng"]["cuda"])
-    return ckpt["step"],ckpt["tokens_seen"],ckpt.get("best_validation_loss")
+    return ckpt["step"],ckpt["tokens_seen"],ckpt.get("best_validation_loss"),ckpt.get("epoch",0)

@@ -2,9 +2,15 @@
 import hashlib,re,unicodedata
 from collections import Counter
 BAD = re.compile(r"(?:https?://\S+|\b(?:buy now|subscribe|click here)\b)",re.I)
+# Literal chat control markers must never survive inside message bodies: the
+# byte-level BPE backend recognises these substrings as single special ids, so
+# a user typing "<ASSISTANT>" (or a scraped row containing it) would otherwise
+# inject a fake role boundary identically at train and inference time.
+MARKER_RE = re.compile(r"<(?:PAD|UNK|BOS|EOS|SYSTEM|USER|ASSISTANT|TOOL|END)>")
 SHORT_OK = {"hi","hello","hey","yes","no","ok","okay","lol","haha","привет","да","нет","ок","ага","спасибо","пока"}
 def clean_text(s):
     s=unicodedata.normalize("NFC",str(s or "")); s="".join(c for c in s if c in "\n\t" or unicodedata.category(c)[0]!="C")
+    s=MARKER_RE.sub(" ",s)
     alpha=sum(c.isalpha() for c in s)
     if alpha and (s.count("Р")+s.count("С"))/alpha>0.12:
         try:

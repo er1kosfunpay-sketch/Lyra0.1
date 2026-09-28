@@ -8,14 +8,14 @@ from typing import Any
 class LyraConfig:
     model_name: str = "Lyra"
     version: str = "0.1.0"
-    vocab_size: int = 32768
-    context_length: int = 4096
-    hidden_size: int = 2048
-    num_layers: int = 32
+    vocab_size: int = 16384
+    context_length: int = 1024
+    hidden_size: int = 1024
+    num_layers: int = 20
     num_attention_heads: int = 16
     num_kv_heads: int = 4
-    head_dim: int = 128
-    intermediate_size: int = 5632
+    head_dim: int = 64
+    intermediate_size: int = 3072
     rope_theta: float = 10000.0
     rope_scaling: Any = None
     norm_eps: float = 1e-6

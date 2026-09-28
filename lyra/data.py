@@ -18,7 +18,7 @@ class PackedTextDataset(IterableDataset):
             else:labels.extend(segment)
         return ids,labels
     def __iter__(self):
-        paths=self.files.copy(); random.Random(self.seed+self.epoch).shuffle(paths); random_gen=random.Random(self.seed+self.epoch); buf=[]; targets=[]
+        paths=self.files.copy(); random.Random(self.seed+self.epoch).shuffle(paths); buf=[]; targets=[]
         for path in paths:
             with open(path,encoding='utf-8') as f:
                 for line in f:
