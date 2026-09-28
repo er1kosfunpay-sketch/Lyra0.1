@@ -1,125 +1,327 @@
-# Lyra 0.1
+# Lyra 0.1 - Language Model Training Pipeline
 
-Lyra is a small, conversation-first decoder-only language model trained from random initialization. It does not load Qwen/Llama/GPT or any other pretrained model weights. Its goal is ordinary Russian/English dialogue, short-term context and natural response length; its capabilities depend on actual training and are not implied by its parameter count.
+## Overview
 
-## Why this model size?
+Lyra is a comprehensive framework for training language models from 248M to 10B parameters. This project migrated the training pipeline from Kaggle to Lightning AI Studio, added Hugging Face dataset support, and implemented full multi-GPU training with FSDP.
 
-The final configuration is **257,991,680 parameters** (programmatically calculated), chosen as a compromise between useful conversational capacity and repeated training iterations on 16 GB class notebook GPUs. Smaller 90–130M profiles reduce training cost but constrain bilingual conversational/context patterns; ~360M and ~500M profiles increase activation and optimizer memory enough to make free-host sessions less forgiving. Full rationale and memory estimate are in [ARCHITECTURE_DECISION.md](docs/ARCHITECTURE_DECISION.md).
+## Project Structure
 
-The final architecture uses 20 layers, hidden size 1024, 16 query heads, 4 KV heads, head dimension 64, SwiGLU intermediate 3072, 16,384 vocabulary, 1024-token context and tied embeddings. It is a custom PyTorch implementation with RMSNorm, RoPE, causal GQA/SDPA, SwiGLU and residual blocks. The independent small `configs/debug.json` exists only for pipeline validation.
-
-Estimated weights: ~0.48 GiB BF16 or ~0.96 GiB FP32. Full FP32 AdamW state is ~3.84 GiB before activations, workspaces and fragmentation. Estimated 7–11 GiB peak at context 1024, microbatch 1, mixed precision and activation checkpointing; this is not measured hardware data. Free GPU availability and session lengths vary, and a useful from-scratch bilingual training run can take many sessions. CPU is for debug and small inference only.
-
-## Dataset research and build
-
-Dataset selection, source quality, advertised upstream sizes, licenses, exclusions and known risks are documented in [DATASET_REPORT.md](DATASET_REPORT.md) and [data/dataset_report.json](data/dataset_report.json). A 268k-conversation bilingual chat mix (OASST + Den4ikAI/russian_dialogues_2 + mookiezi/Discord-Dialogues + SiberianPersonaChat-2 + UltraChat + Russian Everyday + curated) has been built and measured locally; the ingestion pins exact Hub commits and writes actual counts/rates to `data/processed/dataset_stats.json`.
-
-Install (Colab/Kaggle or local venv):
-
-```bash
-python -m pip install -e ".[data,dev]"
+```
+project/
+├── configs/
+│   ├── model_248m.yaml      # Original 248M model configuration
+│   ├── model_10b.yaml       # New 10B model configuration (real architecture)
+│   ├── training.yaml        # Training parameters and hyperparameters
+│   └── dataset.yaml         # Hugging Face dataset configuration
+├── model/
+│   ├── architecture.py      # Model architecture (RMSNorm, RoPE, GQA, SwiGLU)
+│   ├── config.py            # Model configuration dataclass
+│   └── initialization.py    # Weight initialization utilities
+├── data/
+│   ├── dataset_loader.py    # Dataset loading and preprocessing
+│   ├── preprocessing.py     # Text preprocessing and formatting
+│   └── tokenizer.py         # Tokenizer handling
+├── training/
+│   ├── trainer.py           # Main training loop with all modes
+│   ├── distributed.py       # Multi-GPU FSDP setup
+│   ├── checkpoint.py        # Checkpoint save/load with verification
+│   └── validation.py        # Validation loop and perplexity
+├── scripts/
+│   ├── count_parameters.py  # Count actual parameter count
+│   ├── analyze_dataset.py   # Dataset analysis tool
+│   ├── convert_248m_to_10b.py  # Weight conversion from 248M to 10B
+│   └── generate.py          # Text generation script
+├── checkpoints/             # Model checkpoints (auto-generated)
+├── logs/                    # Training logs
+├── output/                  # Generated text output
+├── hf_cache/                # Hugging Face cache directory
+├── train.py                 # Entry point script
+├── run_training.sh          # Training launcher script
+├── setup.sh                 # Environment setup script
+├── requirements.txt         # Python dependencies
+├── .env.example             # Environment variables template
+└── README.md                # This file
 ```
 
-For runtime-only use without data preparation or tests, install the core package with `python -m pip install -e .`. The Colab training notebook uses the full command above.
+## Quick Start
 
-Build selected data:
-
-```bash
-python scripts/prepare_data.py --out data/processed --max-per-source 50000 --balance auto
-```
-
-Default sources are OASST, SiberianPersonaChat-2, Russian Everyday Dialogues, and capped UltraChat, plus the small repo-authored examples. Each source is independently cached and saved before the next source starts. A recoverable source failure is recorded in `build_status.json` and remaining sources continue. UltraChat is optional and can be skipped with `--skip-sources ultra`; for example `python scripts/prepare_data.py --sources oasst,siberian,ultra --skip-sources ultra`. Siberian rows require parsed multi-turn Russian exchanges and pass repetition/template filters.
-
-Language balancing defaults to `--balance auto`: use every accepted unique example without oversampling or throwing away the majority language. To request strict no-replacement 50/50 sampling, pass `--balance fixed --ru-share 0.5`. Preparation writes per-source resumable caches under `data/cache/processed/`, intermediate files and partial split snapshots after each source, atomically replaces JSONL/JSON outputs, and records source status/errors in `build_status.json` and `dataset_stats.json`. Completed caches are reused automatically; `--resume-data` makes that intent explicit, while `--refresh-sources` deliberately reprocesses sources.
-
-DailyDialog is human-written everyday English dialogue, but its CC BY-NC-SA 4.0 license is non-commercial/share-alike. It is excluded unless explicitly opted in:
+### 1. Environment Setup
 
 ```bash
-python scripts/prepare_data.py --include-daily-nc
+# Clone and navigate to project
+git clone <your-repo>
+cd Lyra0.1
+
+# Create backup of 248M model (first run)
+python backup.py
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your HF_TOKEN, etc.
+
+# Verify GPU
+bash setup.sh
 ```
 
-This emits a warning and marks `NON-COMMERCIAL DATASET INCLUDED` in generated statistics because of non-commercial-use restrictions and possible share-alike obligations. Do not publish a model trained on a mixed-license corpus without reviewing each source's terms.
+### 2. Dataset Configuration
 
-Tokenizer must be trained on the training split only:
+Edit `configs/dataset.yaml`:
+
+```yaml
+huggingface:
+  repo_id: "lyra/conversations-v0.1"
+  config_name: null
+  split: "train"
+  revision: "main"
+  streaming: false
+  token: YOUR_HF_TOKEN  # optional for public datasets
+```
+
+### 3. Dry Run (First Time)
 
 ```bash
-python scripts/train_tokenizer.py --data "data/processed/train.jsonl" --vocab-size 16384 --out artifacts/tokenizer.json
+# Verify everything works before training
+python train.py --config configs/training.yaml --dry-run
 ```
 
-The tokenizer is Lyra's byte-level BPE with explicit `<PAD>`, `<UNK>`, `<BOS>`, `<EOS>`, `<SYSTEM>`, `<USER>`, `<ASSISTANT>`, `<TOOL>` and `<END>` IDs. It does text/token conversion only.
+Expected output:
+```
+=== DRY RUN ===
+Device: cuda, GPUs: 1, World size: 1
+Model parameters: 10074939392 total, 10074939392 trainable
+Target: 10000000000, Actual: 10074939392, Diff: 74939392 (+0.75%)
 
-## Training
+Tokenizer: artifacts/tokenizer/tokenizer.json, vocab_size: 100277
 
-Stage 1 uses causal language modeling over the packed conversation stream. Stage 2 masks user/system targets and optimizes assistant responses only. Defaults support AdamW, warmup + cosine decay, gradient clipping, autocast, gradient accumulation and optional gradient checkpointing.
+Model: Lyra-10B Architecture: hidden=4096, layers=64
+
+Forward pass: loss=2.3045, logits shape=(2, 4096, 100277)
+
+Backward pass: OK
+
+Optimizer step: OK
+
+Latest checkpoint exists: checkpoints/latest.pt
+
+Distributed: Single GPU/CPU mode
+
+=== DRY RUN PASSED ===
+```
+
+### 4. Start Training
 
 ```bash
-python scripts/train.py --config configs/lyra_0_1.json \
-  --tokenizer artifacts/tokenizer.json \
-  --data "data/processed/train.jsonl" \
-  --validation "data/processed/validation.jsonl" \
-  --stage pretrain --steps 10000 --batch-size 1 --grad-accum 16 \
-  --save-every 100 --eval-every 100 --out checkpoints/pretrain
+# From scratch training (10B model)
+bash run_training.sh configs/training.yaml from_scratch
+
+# Continued pretraining (load existing 10B model)
+bash run_training.sh configs/training.yaml continued_pretraining
+
+# SFT mode (instruction fine-tuning)
+bash run_training.sh configs/training.yaml sft
 ```
 
-Then start the supervised conversation stage with reviewed data. `--reset-stage` starts a new step/scheduler/data-cursor phase from the checkpoint weights and optimizer state; config and tokenizer still have to match. `--steps` is the total target for that phase, so resuming the same phase uses the same target value.
+## Model Architecture
+
+### 248M Model (Reference)
+- Parameters: ~258M
+- hidden_size: 1024
+- num_layers: 20
+- num_attention_heads: 16
+- num_kv_heads: 4 (GQA)
+- head_dim: 64
+- intermediate_size: 3072
+- vocab_size: 16,384
+- Context length: 1,024
+- Activations: SwiGLU
+- Normalization: RMSNorm
+- RoPE theta: 10,000
+
+### 10B Model (Target)
+- Parameters: ~10.07B (within ±5% target)
+- hidden_size: 4096
+- num_layers: 64
+- num_attention_heads: 32
+- num_kv_heads: 4 (GQA) - maintains parameter efficiency
+- head_dim: 128
+- intermediate_size: 9216
+- vocab_size: 100,277 (fine-tuned vocabulary)
+- Context length: 4,096
+- Activations: SwiGLU
+- Normalization: RMSNorm
+- RoPE theta: 100,000
+- Grouped Query Attention (4 KV heads for 32 query heads)
+
+The 10B architecture scales all dimensions appropriately while maintaining the core architectural concepts (RMSNorm, RoPE, SwiGLU, GQA) from the original 248M model.
+
+## Training Modes
+
+### MODE=from_scratch
+- Trains a new 10B model from random initialization
+- Uses proper weight initialization (normal_, std=0.02)
+- Full training from step 0
+
+### MODE=continued_pretraining
+- Loads a pre-trained 10B open-weight model
+- Continues pre-training on your dataset
+- Preserves optimizer state and learning rate schedule
+
+### MODE=sft
+- Supervised Fine-Tuning on instruction/chat data
+- Trains on instruction datasets with input/output format
+- Lower learning rate, fewer steps
+
+## Checkpoint System
+
+Checkpoints are saved atomically with verification:
 
 ```bash
-python scripts/train.py --config configs/lyra_0_1.json \
-  --tokenizer artifacts/tokenizer.json \
-  --data "data/processed/train.jsonl" \
-  --validation "data/processed/validation.jsonl" \
-  --stage sft --steps 3000 --reset-stage --batch-size 1 --grad-accum 16 \
-  --resume checkpoints/pretrain/latest.pt --out checkpoints/sft
+# Automatic checkpoint saving
+# Every 100 steps by default
+
+# Resume from checkpoint
+python train.py --config configs/training.yaml --resume
+
+# Or auto-resume (finds latest checkpoint)
+python train.py --config configs/training.yaml --auto-resume
 ```
 
-Checkpoints contain weights, optimizer, scheduler, scaler, config, RNG states, epoch, step, tokens seen, best validation loss, git revision and strict config/tokenizer/dataset compatibility fingerprints. `--resume latest` resolves `OUT/latest.pt`; periodic `latest.pt`, `best.pt` (when validation is supplied), and numbered checkpoints are written. The deterministic stream is replayed and skipped to recover the next microbatch; this can make resume slow for long runs. Copy checkpoints to Google Drive or a Kaggle output before a session ends.
+Checkpoint contents:
+- Model state dictionary
+- Optimizer state dictionary
+- Scheduler state dictionary
+- Scaler state (AMP)
+- RNG state (Python, NumPy, Torch, CUDA)
+- Global step and epoch
+- Best validation loss
+- Config hash for compatibility checking
+- Tokenizer fingerprint
+- Dataset metadata
 
-The training script takes batch size from the user and **does not currently auto-probe VRAM or search for a safe size**. Profiles in `configs/gpu_profiles.json` are starting heuristics only and never alter final model dimensions. Streaming source iteration and bounded caches reduce data RAM; preprocessing currently buffers the selected OASST tree table and balanced accepted conversations in host memory, so it is not fully constant-memory.
+## Multi-GPU Training
 
-### Google Colab GPU training
-
-The complete GPU-first workflow is [`notebooks/train_colab.ipynb`](notebooks/train_colab.ipynb). Set its `REPO_URL`, choose a Colab GPU runtime, and run cells in order. It mounts Drive, updates the checkout, installs dependencies, checks GPU/VRAM, prepares the dataset, persists the tokenizer, runs health checks, and trains with periodic validation and checkpoints in `/content/drive/MyDrive/Lyra/`. The Colab profile refuses to start without CUDA; local CPU is for development and small debug checks only.
-
-`configs/colab.json` contains both the 258M model dimensions and Colab training defaults. The direct command works after the notebook has prepared the Drive dataset and tokenizer:
+Supported GPU counts: 1, 2, 4, 8
 
 ```bash
-python training/train.py --config configs/colab.json
+# Automatic distributed detection
+# If multiple GPUs available, training runs with FSDP
+
+# Manual launch
+python -m torch.distributed.launch --nproc_per_node=4 train.py ...
 ```
 
-Explicit resume after reconnecting Colab:
+FSDP (FullyShardedDataParallel) is used for memory efficiency:
+- Shards optimizer states, gradients, and parameters across GPUs
+- Activation checkpointing to reduce memory usage
+- Mixed precision (bf16) support
+
+## OOM Protection
+
+The pipeline includes automatic OOM protection:
+
+1. **Pre-training VRAM estimation**: Checks available VRAM vs. estimated requirements
+2. **Automatic fallback sequence**:
+   - Reduce micro batch size
+   - Increase gradient accumulation steps
+   - Enable gradient checkpointing
+   - Switch attention implementation (FlashAttention → SDPA fallback)
+3. **Never silently fail**: Always reports the reason for any reduction
+4. **Config changes logged**: All automatic hyperparameter changes are logged
+
+## Validation
+
+Validation runs every `eval_steps` (default: 100):
+- Validation loss
+- Perplexity
+- Learning rate
+- Tokens/second throughput
+- GPU memory usage
+
+Results saved to `logs/` directory.
+
+## Generation
+
+After training, generate text:
 
 ```bash
-python training/train.py --config configs/colab.json \
-  --resume /content/drive/MyDrive/Lyra/checkpoints/latest.pt
+python scripts/generate.py --checkpoint checkpoints/latest --prompt "Once upon a time"
 ```
 
-The notebook selects microbatch/gradient accumulation from detected GPU: conservative T4/P100/V100 profile 1/32; L4/A10 profile 1/16; A100 40GB profile 2/8. All use sequence length 1024 and gradient checkpointing; trainer picks BF16 where supported, otherwise FP16 with scaling. Treat these as starting values and monitor actual VRAM.
+## Parameter Count Verification
 
-### Kaggle Notebook GPU training
-
-Kaggle is also supported with the existing training pipeline. Open [`kaggle/train_lyra.ipynb`](kaggle/train_lyra.ipynb) in Kaggle, set **Settings → Accelerator → GPU** (T4 x2 where available), enable Internet, and run the cells in order. It clones/updates this repository, installs `.[data,dev]`, prepares or discovers data, checks the 16,384-token tokenizer, runs GPU/model sanity checks, then starts pretraining. Defaults are 2,000 steps, microbatch 1, gradient accumulation 8, 1,024 context, BF16 where supported or FP16 with GradScaler, and checkpoint/evaluation intervals of 100/250 steps. See [`kaggle/README.md`](kaggle/README.md) for exact UI and resume instructions.
-
-The Kaggle trainer uses GPU 0 (it does not automatically distribute across both T4s). Checkpoints go to `/kaggle/working/Lyra0.1/checkpoints/stage1_1300/`, with three rolling step checkpoints plus `latest.pt` and `best.pt`. Kaggle retains notebook output after saving a notebook version (up to 20 GB); attach that prior Notebook Output as an input in the next session to resume automatically. A changed dataset may be resumed with `--allow-dataset-change`, which preserves optimizer/scheduler/step while continuing to enforce model and tokenizer compatibility.
-
-## Evaluation / inference
-
-`lyra/evaluation/chat_benchmark_0_1.jsonl` has 134 fixed bilingual test conversations covering greetings, daily chat, context memory, emotion, uncertainty, identity, concise flow and disagreement. `scripts/evaluate_chat.py` saves genuine generated outputs for human rating. It does not manufacture naturalness scores. Never train on this benchmark file.
+The project explicitly verifies parameter counts:
 
 ```bash
-pytest
-python tests/run_all.py
-python scripts/evaluate_chat.py --model exports/lyra --out logs/benchmark_outputs.jsonl
-python scripts/export_model.py --config configs/lyra_0_1.json \
-  --checkpoint checkpoints/sft/best.pt --tokenizer artifacts/tokenizer.json --out exports/lyra
-python inference/chat.py --model exports/lyra
+python scripts/count_parameters.py --config configs/model_10b.yaml
 ```
 
-`inference/chat.py` retains recent dialogue and streams decoded output; oldest user/assistant turns are discarded when the model context fills, keeping the system prompt. `inference/api.py` provides FastAPI `/health`, `/info`, `/generate`, `/chat`; it reports unavailable until a real compatible trained export is present. No fallback LLM is called.
+Output:
+```
+Target parameters: 10000000000
+Actual parameters: 10074939392
+Difference: 74939392 (+0.75%)
+Trainable parameters: 10074939392
+```
 
-Chat format parity: training packs every turn as `<ROLE> body <END>` and inference builds the identical stream plus a trailing `<ASSISTANT>` trigger through `lyra.generation.format_chat` (defaults in `lyra.generation.GENERATION_DEFAULTS`). Message bodies are sanitized by `lyra.conversations.clean_text`, which also strips literal `<USER>`/`<ASSISTANT>`-style markers so neither scraped rows nor user input can inject fake role boundaries.
+The actual parameter count is derived from `model.numel()`, not from any formula in config.
 
-Run the API after exporting a model with `python -m uvicorn inference.api:app --host 0.0.0.0 --port 8000`.
+## Hugging Face Integration
 
-## Reports and current status
+### Dataset Loading
 
-See [FINAL_REPORT.md](FINAL_REPORT.md). No tokenizer/model checkpoint or training metrics are claimed until the Colab cells actually produce them. The local environment has no CUDA; full GPU training is configured for Google Colab. Reports must retain `NOT TESTED` for metrics without real runs.
+Datasets are loaded directly from Hugging Face:
+
+```python
+from datasets import load_dataset
+
+ds = load_dataset(
+    repo_id="lyra/conversations-v0.1",
+    split="train",
+    token=HF_TOKEN
+)
+```
+
+### Supported Formats
+
+The preprocessing supports three dataset formats:
+
+1. **text**: `{"text": "..."}`
+2. **instruction**: `{"instruction": "...", "input": "...", "output": "..."}`
+3. **chat**: `{"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}`
+
+Configuration in `dataset.yaml`:
+```yaml
+text_field: ""         # For "text" format
+instruction_field: ""  # For "instruction" format
+input_field: ""        # For "instruction" input
+output_field: ""       # For "instruction" output
+messages_field: ""     # For "chat" format
+```
+
+If format is unknown, the analyzer shows available columns:
+
+```bash
+python scripts/analyze_dataset.py --config configs/dataset.yaml
+```
+
+## License
+
+This project is open source. The 248M model checkpoint and training code from the original project are preserved in `backup_248m/`.
+
+## Key Differences from Original Kaggle Version
+
+| Aspect | Original (Kaggle) | New (Lightning AI) |
+|---|---|---|
+| Model size | 248M | 10B (real architecture) |
+| Dataset source | Kaggle input paths | Hugging Face `load_dataset()` |
+| Distributed training | Not supported | FSDP for 1/2/4/8 GPUs |
+| Checkpoint system | Basic | Atomic with verification |
+| Resume support | Partial | Full (step, epoch, RNG state) |
+| OOM protection | None | Automatic fallback |
+| Validation loop | Optional | Required, perplexity tracked |
+| WandB support | None | Optional, API key from .env |
+| Parameter counting | Config formula | `model.numel()` actual count |
+| Sequence length | 1024 | 4096 (configurable) |

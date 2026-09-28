@@ -1,0 +1,10 @@
+﻿{
+  "policy": "profiles tune execution only and never mutate configs/lyra_0_1.json",
+  "T4": {"dtype":"float16","micro_batch":1,"gradient_accumulation":32,"gradient_checkpointing":true,"attention_backend":"torch_sdpa"},
+  "P100": {"dtype":"float16","micro_batch":1,"gradient_accumulation":32,"gradient_checkpointing":true,"attention_backend":"torch_sdpa"},
+  "V100": {"dtype":"float16","micro_batch":1,"gradient_accumulation":32,"gradient_checkpointing":true,"attention_backend":"torch_sdpa"},
+  "L4": {"dtype":"bfloat16","micro_batch":1,"gradient_accumulation":16,"gradient_checkpointing":true,"attention_backend":"torch_sdpa"},
+  "A10": {"dtype":"bfloat16","micro_batch":1,"gradient_accumulation":16,"gradient_checkpointing":true,"attention_backend":"torch_sdpa"},
+  "A100": {"dtype":"bfloat16","micro_batch":2,"gradient_accumulation":8,"gradient_checkpointing":true,"attention_backend":"torch_sdpa"},
+  "CPU": {"dtype":"float32","micro_batch":1,"gradient_accumulation":1,"gradient_checkpointing":false,"attention_backend":"torch_sdpa","note":"debug and small inference only; final training is impractical"}
+}

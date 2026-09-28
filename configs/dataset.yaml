@@ -1,0 +1,7 @@
+huggingface:
+  repo_id: "lyra/conversations-v0.1"
+  config_name: null
+  split: "train"
+  revision: "main"
+  streaming: false
+  token: null

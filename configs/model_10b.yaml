@@ -1,0 +1,19 @@
+{
+  "model_name": "Lyra-10B",
+  "version": "1.0.0",
+  "vocab_size": 100277,
+  "context_length": 4096,
+  "hidden_size": 4096,
+  "num_layers": 64,
+  "num_attention_heads": 32,
+  "num_kv_heads": 4,
+  "head_dim": 128,
+  "intermediate_size": 9216,
+  "rope_theta": 100000.0,
+  "rope_scaling": null,
+  "norm_eps": 1e-6,
+  "dropout": 0.0,
+  "tie_embeddings": true,
+  "dtype": "bfloat16",
+  "gradient_checkpointing": true
+}
