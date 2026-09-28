@@ -69,3 +69,16 @@ The training pipeline, evaluation prompts, Colab notebook, and export/inference/
 - Verified locally with a two-step tiny debug-model CPU run, checkpoint loading, same-stage resume through step 3, and `--reset-stage --stage sft` starting at step 1. This is pipeline verification, not Lyra 258M training.
 - Fixed the invalid `utf8-sig` codec name in `scripts/train_tokenizer.py`, which surfaced during the tokenizer smoke run.
 - Project suite: **15 passed** after the changes. Kaggle notebook JSON and every code cell parse successfully; Kaggle execution remains NOT TESTED.
+
+## DATASET SWAP 2026-09-28 (conversational dataset replacement)
+
+Goal: replace the previous tiny OASST-only mixture with a larger, higher-quality **conversational chat** dataset (Russian primary, English secondary).
+
+- **Added sources** (both Apache-2.0/MIT, human-written, casual dialogue):
+  - `Den4ikAI/russian_dialogues_2` (MIT): 1.6M multi-turn Russian Telegram dialogue chains; after quality filtering 149,341 conversations kept. Short-form natural chat (median 67 assistant chars).
+  - `mookiezi/Discord-Dialogues` (Apache-2.0): human-only English Discord conversations, upstream-filtered for ToS, links, commands, deduplicated; 48,203 conversations kept.
+- **Rejected candidates** (quality/license): `Den4ikAI/russian_dialogues` (low-quality forum pairs, irrelevant answers), `lmsys/lmsys-chat-1m` (gated / too large), `Anthropic/hh-rlhf` (not meant for SFT), `facebook/empathetic_dialogues` + `li2017dailydialog/daily_dialog` (CC BY-NC-SA non-commercial), `Winreee/russian_chat` (unknown license).
+- **Result**: 268,336 conversations, 170,999 Russian (63.7%) / 97,337 English; splits train 241,504 / validation 13,416 / test 13,416; 0 duplicates; 36,676 invalid rows rejected (mostly Siberian template/short filters). Conversation length stayed chat-like (median 286 chars, p90 4,470; median assistant reply 67 chars).
+- Pipeline changes: `--max-per-source` now accepts per-source overrides (e.g. `50000,ru_chat=150000,discord=50000`), per-source rejection tracking (`rejections_by_source`), and richer `stats()` fields (`conversation_chars_*`, `user/assistant_messages`).
+- Old dataset preserved at `data/processed/oasst_ru_legacy/`. New canonical splits at `data/processed/oasst_ru/`. Full stats in `data/dataset_report.json` and `data/processed/dataset_stats.json`.
+- **Next required step before training**: retrain the tokenizer on the new train split (`python scripts/train_tokenizer.py --data data/processed/oasst_ru/train.jsonl --out artifacts/tokenizer.json --vocab-size 16384`), then run `python tests/run_all.py`.

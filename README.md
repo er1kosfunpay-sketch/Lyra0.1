@@ -12,7 +12,7 @@ Estimated weights: ~0.48 GiB BF16 or ~0.96 GiB FP32. Full FP32 AdamW state is ~3
 
 ## Dataset research and build
 
-Dataset selection, source quality, advertised upstream sizes, licenses, exclusions and known risks are documented in [DATASET_REPORT.md](DATASET_REPORT.md). A partial OASST + Russian Everyday + curated corpus has been built and measured locally; the full default mix including UltraChat is built by the Colab notebook. The ingestion pins exact Hub commits and writes actual counts/rates to `data/processed/dataset_stats.json`.
+Dataset selection, source quality, advertised upstream sizes, licenses, exclusions and known risks are documented in [DATASET_REPORT.md](DATASET_REPORT.md) and [data/dataset_report.json](data/dataset_report.json). A 268k-conversation bilingual chat mix (OASST + Den4ikAI/russian_dialogues_2 + mookiezi/Discord-Dialogues + SiberianPersonaChat-2 + UltraChat + Russian Everyday + curated) has been built and measured locally; the ingestion pins exact Hub commits and writes actual counts/rates to `data/processed/dataset_stats.json`.
 
 Install (Colab/Kaggle or local venv):
 
