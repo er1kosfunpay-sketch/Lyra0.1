@@ -20,3 +20,4 @@ artifacts/
 checkpoints/
 exports/
 logs/*.jsonl
+/Lyra0.1/
