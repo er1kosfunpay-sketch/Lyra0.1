@@ -305,7 +305,7 @@ def rows(source: str, limit: int) -> Iterable[dict[str, Any]]:
             from huggingface_hub import hf_hub_download
             src = Path(hf_hub_download(repo_id=repo, filename="dataset.jsonl.gz", repo_type="dataset", revision=revision, cache_dir="data/cache"))
         rng = random.Random(2026 + hash(source))
-        for item in reservoir_sample(_read_russian_dialogues(src), max(limit, DEFAULT_LIMITS.get(source, limit)), rng):
+        for item in reservoir_sample(_read_russian_dialogues(src), limit, rng):
             yield item
 
     elif source in ("discord",):
@@ -320,7 +320,7 @@ def rows(source: str, limit: int) -> Iterable[dict[str, Any]]:
         import pyarrow.parquet as pq
         rng = random.Random(2026 + hash(source))
         pf = pq.ParquetFile(str(local))
-        for item in reservoir_sample(_read_discord(pf, max(limit, DEFAULT_LIMITS.get(source, limit)), rng), max(limit, DEFAULT_LIMITS.get(source, limit)), rng):
+        for item in reservoir_sample(_read_discord(pf, limit, rng), limit, rng):
             yield item
 
     elif source in ("ultra", "daily", "siberian"):
@@ -536,7 +536,7 @@ def parse_names(value: str) -> list[str]:
 
 
 def resolve_limits(args) -> dict[str, int]:
-    """Map each source to its effective cap."""
+    """Map each source to its effective cap (explicit overrides always win)."""
     plain = int(str(args.max_per_source).split(",")[0].lstrip("-"))
     overrides: dict[str, int] = {}
     for part in str(args.max_per_source).split(","):
@@ -544,7 +544,11 @@ def resolve_limits(args) -> dict[str, int]:
         if "=" in part:
             k, v = part.split("=", 1)
             overrides[k.strip()] = int(v.strip())
-    return {src: overrides.get(src, plain) for src in SOURCES}
+    limits = {src: max(plain, DEFAULT_LIMITS.get(src, plain)) for src in SOURCES}
+    for k, v in overrides.items():
+        if k in limits:
+            limits[k] = v
+    return limits
 
 
 def main(argv: list[str] | None = None) -> int:
