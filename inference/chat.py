@@ -1,6 +1,8 @@
 ﻿"""Interactive local chat keeps recent context and prints assistant replies."""
 import argparse
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 from lyra.config import LyraConfig
 from lyra.model import LyraModel
