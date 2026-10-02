@@ -2,7 +2,11 @@
 """Count parameters for a model config file."""
 import argparse
 import json
+import sys
 from pathlib import Path
+
+# Add project root to sys.path so `import lyra` works when running as script
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 try:
     from lyra.config import LyraConfig

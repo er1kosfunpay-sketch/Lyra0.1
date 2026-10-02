@@ -6,6 +6,9 @@ import argparse
 import sys
 from pathlib import Path
 
+# Add project root to sys.path so `import lyra` works when running as script
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import torch
 
 try:
@@ -20,6 +23,7 @@ except ImportError:
 def main():
     p = argparse.ArgumentParser("Lyra Text Generation")
     p.add_argument("--checkpoint", required=True, help="Path to model checkpoint (.pt)")
+    p.add_argument("--tokenizer", default="artifacts/tokenizer/tokenizer.json")
     p.add_argument("--prompt", default="Once upon a time", help="Generation prompt")
     p.add_argument("--max-tokens", type=int, default=128, help="Max tokens to generate")
     p.add_argument("--temperature", type=float, default=0.8, help="Sampling temperature")
@@ -28,6 +32,10 @@ def main():
     p.add_argument("--eos-token-id", type=int, default=None, help="EOS token ID")
     args = p.parse_args()
 
+    if not HAS_LYRA:
+        print("Error: could not import lyra package. Run from the project root.")
+        sys.exit(1)
+
     ckpt_path = Path(args.checkpoint)
     if not ckpt_path.exists():
         print(f"Error: Checkpoint not found: {ckpt_path}")
@@ -35,32 +43,35 @@ def main():
 
     # Load checkpoint
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    ckpt_cfg = LyraConfig.from_dict(ckpt.get("config", {}))
+    raw_cfg = dict(ckpt.get("config", {}))
+    cfg = LyraConfig(**{k: v for k, v in raw_cfg.items()
+                        if k in LyraConfig.__dataclass_fields__})
 
     # Create model
-    model = LyraModel(ckpt_cfg)
+    model = LyraModel(cfg)
     model.load_state_dict(ckpt["model"])
     model.eval()
 
     # Load tokenizer
-    tokenizer_path = ckpt_cfg  # Would normally be stored separately
-    try:
-        tokenizer = LyraTokenizer.from_file("artifacts/tokenizer/tokenizer.json")
-    except:
-        # Fallback: create minimal tokenizer
-        from lyra.tokenizer import LyraTokenizer
-        tokenizer = LyraTokenizer.train  # won't work, just for type
-        print("Warning: Using default tokenizer")
+    tok_path = Path(args.tokenizer)
+    if not tok_path.exists():
+        print(f"Error: Tokenizer not found: {tok_path}")
+        sys.exit(1)
+    tokenizer = LyraTokenizer.from_file(str(tok_path))
 
-    # Handle BOS/EOS tokens
-    bos_id = tokenizer.id("<BOS>") if hasattr(tokenizer, "id") and "<BOS>" in tokenizer else 0
-    eos_id = tokenizer.id("<EOS>") if hasattr(tokenizer, "id") and "<EOS>" in tokenizer else None
-    pad_id = tokenizer.id("<PAD>") if hasattr(tokenizer, "id") and "<PAD>" in tokenizer else 0
-    unk_id = tokenizer.id("<UNK>") if hasattr(tokenizer, "id") and "<UNK>" in tokenizer else 0
+    # EOS token for stopping; fall back to None if the vocab lacks it.
+    try:
+        eos_id = tokenizer.id("<EOS>")
+    except KeyError:
+        eos_id = None
+    if args.eos_token_id is not None:
+        eos_id = args.eos_token_id
 
     # Generate
     prompt_ids = tokenizer.encode(args.prompt, add_bos=False, add_eos=False)
-    input_ids = torch.tensor([prompt_ids], device=model.device if hasattr(model, 'device') else "cuda")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+    input_ids = torch.tensor([prompt_ids], device=device)
 
     with torch.no_grad():
         generated = model.generate(

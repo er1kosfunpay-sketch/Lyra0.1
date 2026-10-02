@@ -1,6 +1,10 @@
 ﻿"""Stage 1/2 conversation LM training with AMP, accumulation, schedules, and resume."""
-import argparse,glob,hashlib,json,random,subprocess
+import argparse,glob,hashlib,json,random,subprocess,sys
 from pathlib import Path
+
+# Add project root to sys.path so `import lyra` works when running as script
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader

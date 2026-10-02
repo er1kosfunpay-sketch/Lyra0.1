@@ -13,11 +13,14 @@ import json
 import os
 import random
 import re
+import sys
 import tempfile
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lyra.conversations import clean_text, detect_lang, duplicate_key, stats, valid_messages
 

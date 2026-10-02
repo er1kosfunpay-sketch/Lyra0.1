@@ -4,6 +4,9 @@ import argparse
 import sys
 from pathlib import Path
 
+# Add project root to sys.path so `import lyra` works when running as script
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import torch
 try:
     from lyra.config import LyraConfig

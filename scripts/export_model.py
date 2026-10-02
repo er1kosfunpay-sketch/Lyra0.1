@@ -1,6 +1,7 @@
 ﻿"""Export original trained Lyra weights; optional dtype conversion is non-destructive."""
-import argparse,json
+import argparse,json,sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 from lyra.config import LyraConfig
 from lyra.model import LyraModel

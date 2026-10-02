@@ -1,7 +1,10 @@
 huggingface:
-  repo_id: "lyra/conversations-v0.1"
+  repo_id: "HuggingFaceH4/ultrachat_200k"
   config_name: null
-  split: "train"
+  split: "train_sft"
   revision: "main"
   streaming: false
   token: null
+  # How many rows to convert into local JSONL for Colab/Kaggle (T4-friendly default).
+  max_samples: 20000
+  out_dir: "data/hf"

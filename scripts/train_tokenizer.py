@@ -1,10 +1,11 @@
 ﻿"""Train byte-BPE on train-split conversation text only (streaming extraction)."""
-import argparse,glob,json,tempfile
+import argparse,glob,json,tempfile,sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lyra.tokenizer import LyraTokenizer
 
 def main(argv=None):
- p=argparse.ArgumentParser(); p.add_argument('--data',required=True,help='JSONL glob or UTF-8 text files (use the TRAIN split only)'); p.add_argument('--vocab-size',type=int,default=16384); p.add_argument('--out',default='artifacts/tokenizer.json'); a=p.parse_args(argv)
+ p=argparse.ArgumentParser(); p.add_argument('--data',required=True,help='JSONL glob or UTF-8 text files (use the TRAIN split only)'); p.add_argument('--vocab-size',type=int,default=16384); p.add_argument('--out',default='artifacts/tokenizer/tokenizer.json'); a=p.parse_args(argv)
  files=glob.glob(a.data,recursive=True)
  if not files: raise FileNotFoundError(a.data)
  if not any('train' in Path(f).name for f in files):
