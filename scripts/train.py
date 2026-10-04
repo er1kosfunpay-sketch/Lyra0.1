@@ -1,5 +1,5 @@
 ﻿"""Stage 1/2 conversation LM training with AMP, accumulation, schedules, and resume."""
-import argparse,glob,hashlib,json,random,subprocess,sys
+import argparse,glob,hashlib,json,random,shutil,subprocess,sys
 from pathlib import Path
 
 # Add project root to sys.path so `import lyra` works when running as script
@@ -15,7 +15,7 @@ from lyra.data import PackedTextDataset
 from lyra.checkpoint import save_checkpoint,load_checkpoint,fingerprint
 
 def main():
- p=argparse.ArgumentParser(); p.add_argument('--config',default='configs/debug.json'); p.add_argument('--tokenizer'); p.add_argument('--data'); p.add_argument('--validation'); p.add_argument('--stage',choices=['pretrain','sft']); p.add_argument('--steps',type=int,help='target total optimizer steps for this stage; resume runs until this target'); p.add_argument('--batch-size',type=int); p.add_argument('--grad-accum',type=int); p.add_argument('--lr',type=float); p.add_argument('--warmup-steps',type=int); p.add_argument('--save-every',type=int); p.add_argument('--archive-every',type=int); p.add_argument('--keep-last-checkpoints',type=int,default=5); p.add_argument('--eval-every',type=int); p.add_argument('--resume'); p.add_argument('--reset-stage',action='store_true',help='load weights but restart stage step/scheduler/data cursor; permits a new dataset while still validating model/tokenizer config'); p.add_argument('--allow-dataset-change',action='store_true',help='resume optimizer/scheduler/step while accepting a new dataset fingerprint'); p.add_argument('--out'); p.add_argument('--seed',type=int); a=p.parse_args()
+ p=argparse.ArgumentParser(); p.add_argument('--config',default='configs/debug.json'); p.add_argument('--tokenizer'); p.add_argument('--data'); p.add_argument('--validation'); p.add_argument('--stage',choices=['pretrain','sft']); p.add_argument('--steps',type=int,help='target total optimizer steps for this stage; resume runs until this target'); p.add_argument('--batch-size',type=int); p.add_argument('--grad-accum',type=int); p.add_argument('--lr',type=float); p.add_argument('--warmup-steps',type=int); p.add_argument('--save-every',type=int); p.add_argument('--archive-every',type=int); p.add_argument('--keep-last-checkpoints',type=int,default=3); p.add_argument('--eval-every',type=int); p.add_argument('--resume'); p.add_argument('--reset-stage',action='store_true',help='load weights but restart stage step/scheduler/data cursor; permits a new dataset while still validating model/tokenizer config'); p.add_argument('--allow-dataset-change',action='store_true',help='resume optimizer/scheduler/step while accepting a new dataset fingerprint'); p.add_argument('--out'); p.add_argument('--seed',type=int); a=p.parse_args()
  raw_cfg=json.loads(Path(a.config).read_text(encoding='utf-8-sig')); tr=raw_cfg.get('training',{})
  defaults={'tokenizer':'artifacts/tokenizer/tokenizer.json','data':'data/processed/oasst_ru/train.jsonl','validation':'data/processed/oasst_ru/validation.jsonl','stage':'pretrain','steps':1000,'batch_size':1,'grad_accum':8,'lr':3e-4,'warmup_steps':100,'save_every':100,'archive_every':0,'eval_every':100,'out':'checkpoints','seed':17}
  for key,value in defaults.items():
@@ -45,18 +45,57 @@ def main():
   scaler=torch.amp.GradScaler('cuda',enabled=(device=='cuda' and amp_dtype==torch.float16))
  except (AttributeError,TypeError):
   scaler=torch.cuda.amp.GradScaler(enabled=(device=='cuda' and amp_dtype==torch.float16))
- step=tokens=0; best_val=float('inf'); ckpt_epoch=0
- if a.resume is None and (Path(a.out)/'latest.pt').exists(): a.resume='latest'
- if a.resume and a.resume!='latest':
-  step,tokens,loaded_best,ckpt_epoch=load_checkpoint(a.resume,model,opt,cfg,tfp,scaler,scheduler=None if a.reset_stage else sched,dataset_version=None if (a.reset_stage or a.allow_dataset_change) else dataset_version)
-  if a.reset_stage: step=0
-  elif loaded_best is not None: best_val=loaded_best
- elif a.resume=='latest':
-  latest=Path(a.out)/'latest.pt'
-  if not latest.exists(): raise FileNotFoundError(f'--resume latest requested, but no checkpoint exists at {latest}')
-  step,tokens,loaded_best,ckpt_epoch=load_checkpoint(latest,model,opt,cfg,tfp,scaler,scheduler=None if a.reset_stage else sched,dataset_version=None if (a.reset_stage or a.allow_dataset_change) else dataset_version)
-  if a.reset_stage: step=0
-  elif loaded_best is not None: best_val=loaded_best
+ step=tokens=0; best_val=float('inf'); ckpt_epoch=0; loaded_from=None; last_ckpt_bytes=None
+ def _add_candidate(cands,p):
+  p=Path(p)
+  try:
+   if p.is_file() and p.suffix=='.pt' and p.stat().st_size>0 and str(p) not in [str(c) for c in cands]: cands.append(p)
+  except OSError: pass
+ def _scan_dir(d):
+  found=[]; _add_candidate(found,Path(d)/'latest.pt')
+  try: files=sorted(Path(d).glob('checkpoint_step_*.pt'),key=lambda f:f.stat().st_mtime_ns,reverse=True)
+  except OSError: files=[]
+  for f in files: _add_candidate(found,f)
+  _add_candidate(found,Path(d)/'best.pt')
+  return found
+ def _resolve_candidates(spec):
+  # None/'latest' -> automatic scan of the out dir. Otherwise a checkpoint
+  # file, a directory (e.g. --resume checkpoint-2000), or a bare name
+  # under the out dir. Sibling archives are appended as fallbacks so that
+  # one corrupt file never forces a restart from step 0.
+  if spec is None or spec=='latest': return _scan_dir(a.out)
+  cands=[]; ep=Path(spec); found=False
+  if ep.is_file(): cands.append(ep); found=True
+  elif ep.is_dir(): cands.extend(_scan_dir(ep)); found=True
+  else:
+   fb=Path(a.out)/ep.name
+   if fb.is_file(): cands.append(fb); found=True
+   elif fb.is_dir(): cands.extend(_scan_dir(fb)); found=True
+  if found:
+   for f in _scan_dir(a.out):
+    if str(f) not in [str(c) for c in cands]: cands.append(f)
+  return cands
+ def _try_load(path):
+  dv=None if (a.reset_stage or a.allow_dataset_change) else dataset_version
+  return load_checkpoint(path,model,opt,cfg,tfp,scaler,scheduler=None if a.reset_stage else sched,dataset_version=dv)
+ explicit=a.resume is not None and a.resume!='latest'
+ cands=_resolve_candidates(a.resume); failures=[]
+ if explicit and not cands: raise RuntimeError(f'--resume target not found: {a.resume}')
+ for cand in cands:
+  try:
+   step,tokens,loaded_best,ckpt_epoch=_try_load(cand)
+   if a.reset_stage: step=0
+   elif loaded_best is not None: best_val=loaded_best
+   loaded_from=cand; last_ckpt_bytes=cand.stat().st_size
+   print(json.dumps({'resume':str(cand),'from_step':step,'target_steps':a.steps,'remaining':max(0,a.steps-step),'tokens_seen':tokens}),flush=True)
+   break
+  except Exception as e: failures.append(f'{cand}: {type(e).__name__}: {e}')
+ if loaded_from is None and cands:
+  detail='\n'.join(failures) if failures else f'target not found: {a.resume}'
+  raise RuntimeError(f'No valid checkpoint to resume from; refusing to start fresh:\n{detail}')
+ if loaded_from is None and not cands: print(json.dumps({'resume':'none found; starting fresh from step 0','target_steps':a.steps}),flush=True)
+ if loaded_from is not None and step>=a.steps and not a.reset_stage:
+  print(json.dumps({'status':'Training complete','steps':step,'target_steps':a.steps}),flush=True); return
  if a.reset_stage:
   # The optimizer state is retained, but the new phase starts at its own LR schedule.
   for group,base_lr in zip(opt.param_groups,sched.base_lrs): group['lr']=base_lr*lr_scale(0)
@@ -76,16 +115,35 @@ def main():
   except StopIteration:
    if is_val:return None
    epoch+=1; ds.set_epoch(epoch); it=iter(dl); return next(it)
+ def disk_free_gb():
+  try: return shutil.disk_usage(str(out)).free/1024**3
+  except OSError: return float('nan')
+ def est_ckpt_gb():
+  if last_ckpt_bytes: return last_ckpt_bytes/1024**3
+  try: return model.parameter_count()*12/1e9+0.05
+  except Exception: return 3.0
  model.train(); opt.zero_grad(set_to_none=True); out=Path(a.out); out.mkdir(parents=True,exist_ok=True)
+ data_gb=sum(Path(f).stat().st_size for f in files+val_files)/1024**3
+ planned_files=(a.keep_last_checkpoints if a.archive_every else 0)+2
+ print(json.dumps({'disk_free_gib':round(disk_free_gb(),2),'data_gib':round(data_gb,3),'est_ckpt_gib':round(est_ckpt_gb(),2),'planned_ckpt_files':planned_files,'projected_ckpts_gib':round(est_ckpt_gb()*planned_files,2),'limit_gib':19}),flush=True)
  log_path=out/'training.jsonl'
  def emit(record):
   line=json.dumps(record,ensure_ascii=False); print(line,flush=True)
   with log_path.open('a',encoding='utf-8') as log: log.write(line+'\n'); log.flush()
  def save(path):
+  nonlocal last_ckpt_bytes
+  need=est_ckpt_gb()
+  if not (disk_free_gb()>need*2+1.0):
+   prune_archives(keep_min=1)
+   if not (disk_free_gb()>need+0.5): raise RuntimeError(f'Disk guard: only {disk_free_gb():.2f} GiB free, need ~{need:.2f} GiB for {path}; refusing to write a partial checkpoint.')
   save_checkpoint(path,model,opt,cfg,step,tokens,tfp,dataset_version=dataset_version,scaler=scaler,scheduler=sched,epoch=epoch,best_validation_loss=best_val,stage=a.stage,dataset_info=dataset_info)
- def prune_archives():
+  try: last_ckpt_bytes=Path(path).stat().st_size
+  except OSError: pass
+ def prune_archives(keep_min=None):
+  keep=a.keep_last_checkpoints if keep_min is None else min(a.keep_last_checkpoints,keep_min)
   archives=sorted(out.glob('checkpoint_step_*.pt'),key=lambda f:f.stat().st_mtime_ns)
-  for old in archives[:-a.keep_last_checkpoints] if a.keep_last_checkpoints else archives:
+  victims=archives if not keep else archives[:-keep]
+  for old in victims:
    old.unlink(missing_ok=True)
  while step<a.steps:
   total_loss=0.0
@@ -117,6 +175,8 @@ def main():
    if a.archive_every and step%a.archive_every==0:
     save(out/f'checkpoint_step_{step:08d}.pt'); prune_archives()
    save(out/'latest.pt')
+   emit({'step':step,'stage':a.stage,'checkpoint_saved':step,'disk_free_gib':round(disk_free_gb(),2),'tokens_seen':tokens})
  # latest.pt is the resumable final state; avoid a second multi-gigabyte copy.
  if step%a.save_every: save(out/'latest.pt')
+ print(json.dumps({'status':'Training complete','steps':step,'target_steps':a.steps,'tokens_seen':tokens,'checkpoints':str(out)}),flush=True)
 if __name__=='__main__':main()

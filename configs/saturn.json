@@ -18,19 +18,19 @@
   "gradient_checkpointing": true,
   "training": {
     "require_cuda": true,
-    "tokenizer": "/kaggle/working/Lyra0.1/artifacts/tokenizer/tokenizer.json",
-    "data": "/kaggle/working/Lyra0.1/data/processed/kaggle_stage1/train.jsonl",
-    "validation": "/kaggle/working/Lyra0.1/data/processed/kaggle_stage1/validation.jsonl",
+    "tokenizer": "artifacts/tokenizer/tokenizer.json",
+    "data": "data/processed/saturn_stage1/train.jsonl",
+    "validation": "data/processed/saturn_stage1/validation.jsonl",
     "stage": "pretrain",
-    "steps": 10000,
+    "steps": 2000,
     "batch_size": 1,
     "grad_accum": 8,
     "lr": 0.0003,
     "warmup_steps": 100,
-    "save_every": 500,
-    "archive_every": 500,
-    "eval_every": 500,
-    "out": "/kaggle/working/Lyra0.1/checkpoints/stage1_1300",
+    "save_every": 100,
+    "archive_every": 100,
+    "eval_every": 250,
+    "out": "checkpoints/stage1_1300",
     "seed": 17
   }
 }
