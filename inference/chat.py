@@ -12,6 +12,9 @@ from lyra.generation import GENERATION_DEFAULTS,fit_history_to_context
 SYSTEM_PROMPT='You are Lyra 0.1. Be conversational, concise when appropriate, and do not invent facts you do not know.'
 
 def main(argv=None):
+ if hasattr(sys.stdout, 'reconfigure'):
+  # Generated text can contain undecodable bytes; printing must never crash.
+  sys.stdout.reconfigure(encoding='utf-8', errors='backslashreplace')
  p=argparse.ArgumentParser(); p.add_argument('--model',default='exports/lyra'); p.add_argument('--max-new-tokens',type=int,default=256); a=p.parse_args(argv); root=Path(a.model)
  c=LyraConfig.from_json(root/'config.json'); tok=LyraTokenizer.from_file(root/'tokenizer.json'); dev='cuda' if torch.cuda.is_available() else 'cpu'; m=LyraModel(c).to(dev); m.load_state_dict(torch.load(root/'model.pt',map_location=dev,weights_only=True)); m.eval(); d=GENERATION_DEFAULTS
  hist=[{'role':'system','content':SYSTEM_PROMPT}]

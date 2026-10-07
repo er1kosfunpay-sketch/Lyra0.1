@@ -1,50 +1,121 @@
-﻿# Dataset research and selection: Lyra Conversation Dataset 0.1
+﻿# Lyra 0.1 — Dataset Report
 
-Research snapshot: 2026-09-26. Hub pages, their cards and repository metadata can change; the ingestion script pins each dataset repository commit before processing and writes those SHA values into `dataset_stats.json`. This document distinguishes advertised upstream counts from this repository's processed counts. Pinned source snapshots were downloaded and a partial bilingual training mixture was built; the default UltraChat-augmented mixture has not been built.
+**Single source:** `Den4ikAI/russian_dialogues_2` (Hugging Face, MIT license)
+**Revision:** `8ce8d669a3f749ec8aa03ea01c475012ef210866`
+**Other datasets:** NONE
+**Builder:** `python scripts/prepare_data.py --out data/processed`
+**Build state:** `SUCCESS` · `single_source: true` · `fallback_used: false` · `failed_sources: []`
 
-## Selected sources
+Generated from `data/processed/dataset_stats.json`, `build_status.json` and
+`artifacts/tokenizer/tokenizer_stats.json`. Machine-readable copy:
+`data/dataset_report.json`.
 
-| Dataset | Language / upstream size | License (Hub metadata/card) | Use in Lyra | Risks / filters |
-|---|---|---|---|---|
-| [OpenAssistant/oasst1](https://huggingface.co/datasets/OpenAssistant/oasst1) | 35 languages; Hub card reports 161,443 messages and 10k+ trees; current viewer lists train 84.4k and validation 4.4k rows | Apache-2.0 | Primary human-generated, human-annotated source. Only English/Russian; reconstruct parent-child trees; choose each child branch by positive-minus-negative votes, review count and rank; only ready-for-export, non-deleted messages | Broad assistant Q&A more than casual conversation; high-rated branches can still be verbose, factual, or instruction-heavy. Keep source capped and inspect samples |
-| [kukunechka/russian-everyday-dialogues](https://huggingface.co/datasets/kukunechka/russian-everyday-dialogues) | Russian; 20 native-authored dialogues, 7 shopping / 6 transport / 7 cafe | CC BY 4.0 | Included as a tiny high-relevance Russian conversational seed, loaded from the repository JSONL (the Hub viewer currently errors on a mixed schema) | Too small to materially change overall language distribution; preserve author attribution |
-| [DailyDialog (roskoN mirror)](https://huggingface.co/datasets/roskoN/dailydialog) | English; 13,118 total rows; train/validation/test preserved | CC BY-NC-SA 4.0 | Human-written everyday multi-turn conversations; useful as a small casual-dialogue component and benchmark material | Non-commercial and share-alike. It is never downloaded by default; `--include-daily-nc` is explicit opt-in. Preserve attribution and license; confirm downstream model distribution obligations before release |
-| [HuggingFaceH4/ultrachat_200k](https://huggingface.co/datasets/HuggingFaceH4/ultrachat_200k) | English; 207,865 `train_sft`, 23,110 `test_sft`; full Hub dataset reports 515,311 rows / 1.62 GB across four splits | MIT on Hub | Capped SFT-only supplement for instruction handling and multi-turn answer structure; randomly buffered streaming avoids consuming the full parquet corpus into RAM | Synthetic ChatGPT-generated prompts/replies, task-heavy and sometimes very long. Filter capped to 50k, max 20 turns/9k chars; never use as the only basis for casual-chat style |
+## 1. Source rules
 
-The implementation also adds 12 small, repository-authored bilingual examples for identity, context recall and calibrated unknowns. These are explicitly source-tagged and are not disguised as human conversation data.
+- Exactly one source key: `ru_chat`. `--sources` accepts nothing else — any other
+  value aborts with an argparse error before any data is touched.
+- The full corpus is used. There is no `first N`, no `max_samples`, no per-source
+  cap and no reservoir sampling. `--limit` exists only for tests; when used it is
+  recorded in the stats (`limit`, `limit_note`).
+- If the raw corpus cannot be obtained the build fails with an explicit error and
+  writes `build_state: FAILED_SOURCE_UNAVAILABLE`. It never downloads or mixes in
+  another dataset.
 
-## Russian candidates reviewed
+## 2. Cleaning (conservative)
 
-| Candidate | Findings | Decision |
-|---|---|---|
-| [DeepPavlov/ru_daily_dialog](https://huggingface.co/datasets/DeepPavlov/ru_daily_dialog) | Viewer lists 87.2k train rows and shows progressively longer prefixes of the same dialogue; Russian lines appear translated from English DailyDialog. License is not visible in current Hub metadata/card | Exclude from default build: translated phrasing and cumulative-prefix duplicates; upstream non-commercial license chain needs review |
-| [SiberiaSoft/SiberianPersonaChat-2](https://huggingface.co/datasets/SiberiaSoft/SiberianPersonaChat-2) | Russian, MIT metadata, 171k rows. Examples use persona templates and often long embedded prior dialogue; the card does not establish human authorship | Included in the current default source list behind strict dialogue parsing: QA rows, short exchanges, persona scaffolding, repeated messages and repeated first-user prompts are rejected. Omit with `--skip-sources siberian`; manually inspect output samples before training |
-| [limloop/ru_en_linguistic_exchange](https://huggingface.co/datasets/limloop/ru_en_linguistic_exchange) | 20k bilingual rows, MIT, but explicitly synthetic and framed as language-learning / grammar explanation | Exclude from main casual-chat mixture; different speech act and synthetic style |
-| [igorktech/tiny_conversations](https://huggingface.co/datasets/igorktech/tiny_conversations) | 685,726 Russian subtitle/movie dialogue examples derived from Cornell Movie Dialogs and Taiga TV subtitles. The HF card describes upstream source licenses, but not a sufficiently clear combined redistribution grant for every source/version | Exclude pending license chain verification; subtitle character dialogue is not assistant-user interaction |
-| [LUMAMODEL/luma-dataset](https://huggingface.co/datasets/LUMAMODEL/luma-dataset) | Russian SFT dataset advertises ~10k examples, including ~4.2k eval; license field is absent in current page metadata, provenance appears mixed | Exclude until provenance/license are documented; do not inherit its eval split |
-| [pavelfedortsov/russian-colloquial-sft-50k](https://huggingface.co/datasets/pavelfedortsov/russian-colloquial-sft-50k) | Russian style-transfer pairs generated with Gemini; card identifies CC BY-NC-SA upstream Telegram source and non-commercial caveat | Exclude from default mix: transformation task and source-license restrictions |
-| [ai-forever/RUMBA](https://huggingface.co/datasets/ai-forever/RUMBA) | Russian and English, MIT metadata, synthetic long-term-memory QA benchmark; 1,543 QA items; Hub reports ~1.5 GB | Evaluation-only candidate; do not train on benchmark answers or histories |
-| [SonexaAI/ru_eng-humanity-dataset](https://huggingface.co/datasets/SonexaAI/ru_eng-humanity-dataset) | 20k synthetic instruction samples; card says CC0 and explicitly warns template repetition | Exclude from main mix: generated/template-heavy rather than real human chat |
+Only demonstrably broken rows are dropped. Russian text, short answers and
+ordinary chat formatting are kept.
 
-There is a real Russian conversational-data scarcity. The default `--balance auto` preserves every accepted, deduplicated conversation in both languages without oversampling or cutting down the majority language. Use `--balance fixed --ru-share 0.5` only to explicitly request a no-replacement 50/50 sample. `dataset_stats.json` records before/after language counts and the selected policy. If no usable source data remains, the builder reports a critical no-data error instead of replacing existing splits with empty files.
+| Reason | Dialogues removed |
+|---|---:|
+| `symbol_soup` | 58 |
+| `no_letters` | 7 |
+| `not_russian` (cyrillic share < 0.25, case-insensitive) | 6 |
+| `duplicates` (exact normalized duplicates) | 109 |
+| **Total removed** | **180 (0.011%)** |
 
-## Filtering and splits
+Guards that fired zero times on this corpus: `too_few_messages`,
+`non_string_message`, `encoding_damage`, `empty_message_after_clean`,
+`link_only_message`, `meaningless_repetition`, `conversation_too_long`,
+`message_too_long`.
 
-The builder performs language routing (Russian/English script proportion), role/turn validation, control-character cleanup, mojibake repair, URL/ad boilerplate rejection, per-message length limits, contextual short-reply acceptance, repeated-character checks, normalized whole-conversation exact/format deduplication, deterministic shuffling, and 90/5/5 train/validation/test assignment. OASST trees choose one path by vote margin, helpfulness/quality labels and review count; deleted/synthetic branches and non-ready trees are excluded. Siberian persona prefixes are stripped before retaining dialogue turns; QA/template-like examples, low turn counts, repeated messages, and repeated first prompts are filtered. UltraChat is streamed and bounded; its failures are source-local and do not abort other sources. DailyDialog is opt-in because of its license.
+## 3. Counts
 
-Each successfully processed source is atomically committed to `data/cache/processed/<source>.jsonl` with revision/license metadata. The builder reuses completed caches by default (`--resume-data` is an explicit resume flag); use `--refresh-sources` to force reprocessing. It also writes `data/processed/intermediate/<source>.jsonl`, updates `build_status.json`, and refreshes the currently available split files after every source. Split/stat writes use temporary files and atomic replacement. Recoverable source errors are marked `SOURCE_FAILED`, printed as warnings, and do not discard cached successes. If a source fails during refresh, its prior complete cache remains available to the partial build.
+| Metric | Value |
+|---|---:|
+| Original dialogues | 1,701,649 |
+| Clean dialogues | 1,701,469 (99.989%) |
+| Removed dialogues | 180 (0.011%) |
+| Messages | 7,703,297 |
+| Characters | 464,782,132 |
+| Build time | 711.4 s |
 
-Near-duplicate handling at present means normalized-text fingerprinting (punctuation/spacing variants); semantic fuzzy deduplication is not claimed. Language detection is script-based and should be manually audited on the prepared corpus. The builder reports filter and duplicate rates so thresholds can be tuned based on observed data.
+## 4. Splits
 
-## Snapshot results
+Hash-based deterministic split, seed 17, 98 / 1 / 1.
 
-- OpenAssistant raw `all.messages.jsonl.gz`: downloaded, 53,622,827 compressed bytes. The corresponding tree structure file was downloaded and used for branch-level filtering.
-- Russian Everyday Dialogues JSONL: downloaded, 6,538 bytes; source commit `3d9c43ca85a50e7a32fa7b05e27c0637a710e988`.
-- Russian Everyday Dialogues cleaned subset: **20 conversations / 40 messages**, mean and median 2 turns, max 2, mean assistant response length 54.25 characters, mean user message length 28.6 characters, Russian 100%. The upstream JSONL had confirmed UTF-8/CP1251 mojibake; the cleaner repaired it before writing `data/curated/russian_everyday_dialogues.jsonl`.
-- OASST raw nested trees: downloaded, 53,625,064 compressed bytes. Hub revision at download: `fdf72ae0827c1cda404aff25b6603abec9e3399b`.
-- **Actual partial build** from OASST + Russian Everyday Dialogues + 12 project-authored examples, command `scripts/prepare_data.py --sources oasst,ru_everyday --max-per-source 50000 --ru-share 0.5 --out data/processed/oasst_ru` (UltraChat and DailyDialog intentionally not included in this run): 4,462 extracted candidates; 224 excluded by post-extraction quality filters (5.02%); 0 normalized duplicates; 4,238 unique survivors before language balance. Candidates before balancing: 739 Russian / 3,499 English. Selected without replacement to 1,478 total, 739 per language; source contribution after balance: 1,450 OASST conversations, 20 Russian Everyday Dialogues, 8 curated identity/context/empathy examples.
-- Resilience-pipeline local build, command `python scripts/prepare_data.py --sources oasst,siberian,ru_everyday,ultra --skip-sources siberian,ultra --balance auto --max-per-source 50000 --out data/processed/resilience_check`: OASST, Russian Everyday and curated caches committed independently; skipped sources were never fetched. OASST+local sources produced 4,238 unique conversations (3,502 English / 736 Russian), all retained under auto balance. The 90/5/5 splits and build manifest were written after each completed source. Siberian and UltraChat network ingestion were deliberately not invoked in this smoke build.
-- Train split: **1,332 conversations / 4,923 messages**, mean turns 3.70, median 4, max 6; 666 Russian / 666 English. Validation: **73 conversations / 292 messages**, mean turns 4.00, 36 English / 37 Russian. Test: **73 conversations / 272 messages**, mean turns 3.73, 37 English / 36 Russian. Train assistant response length mean 794.3 characters (p25/p50/p75/p90: 246/616/1,162/1,677) and user-message mean 115.9 characters (p25/p50/p75/p90: 39/67/123/221). OASST is often long-form and instruction-oriented, a material mismatch with casual chat; expect further source/style refinement.
-- Full default corpus from OASST + Siberian + Russian Everyday + UltraChat: **NOT BUILT** in this snapshot. The OASST + Russian Everyday + curated partial corpus above was built before the new per-source cache implementation. UltraChat and Siberian full-source ingestion remain **NOT TESTED**; inspect their cached samples and source status before training.
-- Source-failure continuation was tested with an injected UltraChat streaming exception: prior completed source stayed in `train.jsonl`, UltraChat was recorded as `SOURCE_FAILED`, remaining sources ran, and the command returned a partial build instead of a traceback.
-- Use `python scripts/prepare_data.py --include-daily-nc` only for non-commercial use. It writes `NON-COMMERCIAL DATASET INCLUDED` into `dataset_stats.json` and prints a license warning. Inspect generated samples and source statuses before training.
+| Split | Dialogues | Messages | Characters | Bytes | Tokens | Share of corpus |
+|---|---:|---:|---:|---:|---:|---:|
+| train | 1,667,208 | 7,547,875 | 455,434,219 | 1,168,186,616 | 122,821,577 | 97.976% |
+| validation | 17,207 | 78,156 | 4,711,488 | 12,084,827 | 1,271,269 | 1.011% |
+| test | 17,054 | 77,266 | 4,636,425 | 11,911,388 | 1,250,688 | 1.002% |
+| **total** | **1,701,469** | **7,703,297** | **464,782,132** | **1,192,182,831** | **125,343,534** | **99.989%** |
+
+Token counts are produced by `scripts/train_tokenizer.py --count-splits auto`
+with the shipped tokenizer (16,384 vocab), so they are the numbers training
+actually sees.
+
+## 5. Tokenizer
+
+| Item | Value |
+|---|---|
+| File | `artifacts/tokenizer/tokenizer.json` |
+| Algorithm | byte-level BPE (`tokenizers`) |
+| Vocabulary | 16,384 (exactly the requested size) |
+| Trained on | `data/processed/train.jsonl` only (7,547,875 messages, 178.3 s) |
+| Special tokens | `<PAD> <UNK> <BOS> <EOS> <SYSTEM> <USER> <ASSISTANT> <TOOL> <END>` |
+| EOS | `<END>` |
+| Verification | `verification.ok = true` |
+
+Verification checks every Russian probe for exact round-trip and zero `<UNK>`:
+
+| Probe | Tokens | Round-trip | `<UNK>` |
+|---|---:|---|---:|
+| `Привет` | 1 | OK | 0 |
+| `Привет, как дела?` | 5 | OK | 0 |
+| `Здравствуйте! Рад тебя видеть.` | 6 | OK | 0 |
+| `Что ты сейчас делаешь?` | 5 | OK | 0 |
+| `Мне сегодня очень грустно` | 4 | OK | 0 |
+| `Давай немного поговорим` | 4 | OK | 0 |
+| `Я играю в Roblox` | 9 | OK | 0 |
+| `А что ты думаешь про эту погоду? Дождь с самого утра, совсем выйти некуда.` | 19 | OK | 0 |
+
+The tokenizer is stable across Python restarts (plain JSON on disk, no pickled
+state) and its vocabulary size matches `configs/kaggle.json` (`vocab_size`), so
+the model embedding table lines up with it.
+
+## 6. Corpus usage
+
+| Metric | Value |
+|---|---:|
+| Dialogues written to splits / original | 99.9894% |
+| train / original | 97.976% |
+| validation / original | 1.011% |
+| test / original | 1.002% |
+
+Nothing beyond the 0.011% of provably broken rows is discarded: the whole usable
+corpus reaches training.
+
+## 7. Reproduce
+
+```bash
+python scripts/prepare_data.py --out data/processed     # ~12 min, reuses the raw cache
+python scripts/train_tokenizer.py --data data/processed/train.jsonl \
+    --vocab-size 16384 --expect-vocab-size 16384 \
+    --out artifacts/tokenizer/tokenizer.json \
+    --stats-out artifacts/tokenizer/tokenizer_stats.json --count-splits auto
+python -m pytest tests/ -q                              # includes single-source guards
+```
+
+A re-run with the same parameters reuses the existing splits
+(`SUCCESS_REUSED`); `--force` rebuilds them from scratch.

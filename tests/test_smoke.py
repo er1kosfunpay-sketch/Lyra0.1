@@ -93,7 +93,10 @@ def test_fresh_process_reload_and_generate(tmp_path):
   f"step,tokens,best,epoch=load_checkpoint(r'{ckpt}',m,opt,c,__import__('hashlib').sha256(open(r'{tok_path}','rb').read()).hexdigest(),dataset_version='ds')\n"
   'm.eval(); x=torch.tensor([[tok.id(\"<USER>\")]]); y=m.generate(x,max_new_tokens=3,temperature=0,top_k=0)\n'
   'assert y.shape==(1,4),(y.shape,); print(f\"FRESH_RELOAD_OK step={step} out={y.shape}\")\n',encoding='utf8')
- r=subprocess.run([sys.executable,str(probe)],capture_output=True,text=True,timeout=300)
+ import os
+ from pathlib import Path as _Path
+ env={**os.environ,'PYTHONPATH':str(_Path(__file__).resolve().parents[1])}
+ r=subprocess.run([sys.executable,str(probe)],capture_output=True,text=True,timeout=300,env=env)
  assert r.returncode==0,(r.stdout,r.stderr); assert 'FRESH_RELOAD_OK' in r.stdout
 
 def test_packed_sft_batch_minimal_step(tmp_path):

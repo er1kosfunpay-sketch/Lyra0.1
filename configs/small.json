@@ -18,7 +18,7 @@
   "gradient_checkpointing": true,
   "training": {
     "require_cuda": false,
-    "tokenizer": "artifacts/tokenizer.json",
+    "tokenizer": "artifacts/tokenizer/tokenizer.json",
     "data": "data/processed/train.jsonl",
     "validation": "data/processed/validation.jsonl",
     "stage": "pretrain",

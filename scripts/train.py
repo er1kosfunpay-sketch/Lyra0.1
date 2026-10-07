@@ -17,7 +17,7 @@ from lyra.checkpoint import save_checkpoint,load_checkpoint,fingerprint
 def main():
  p=argparse.ArgumentParser(); p.add_argument('--config',default='configs/debug.json'); p.add_argument('--tokenizer'); p.add_argument('--data'); p.add_argument('--validation'); p.add_argument('--stage',choices=['pretrain','sft']); p.add_argument('--steps',type=int,help='target total optimizer steps for this stage; resume runs until this target'); p.add_argument('--batch-size',type=int); p.add_argument('--grad-accum',type=int); p.add_argument('--lr',type=float); p.add_argument('--warmup-steps',type=int); p.add_argument('--save-every',type=int); p.add_argument('--archive-every',type=int); p.add_argument('--keep-last-checkpoints',type=int,default=3); p.add_argument('--eval-every',type=int); p.add_argument('--resume'); p.add_argument('--reset-stage',action='store_true',help='load weights but restart stage step/scheduler/data cursor; permits a new dataset while still validating model/tokenizer config'); p.add_argument('--allow-dataset-change',action='store_true',help='resume optimizer/scheduler/step while accepting a new dataset fingerprint'); p.add_argument('--out'); p.add_argument('--seed',type=int); a=p.parse_args()
  raw_cfg=json.loads(Path(a.config).read_text(encoding='utf-8-sig')); tr=raw_cfg.get('training',{})
- defaults={'tokenizer':'artifacts/tokenizer/tokenizer.json','data':'data/processed/oasst_ru/train.jsonl','validation':'data/processed/oasst_ru/validation.jsonl','stage':'pretrain','steps':1000,'batch_size':1,'grad_accum':8,'lr':3e-4,'warmup_steps':100,'save_every':100,'archive_every':0,'eval_every':100,'out':'checkpoints','seed':17}
+ defaults={'tokenizer':'artifacts/tokenizer/tokenizer.json','data':'data/processed/train.jsonl','validation':'data/processed/validation.jsonl','stage':'pretrain','steps':1000,'batch_size':1,'grad_accum':8,'lr':3e-4,'warmup_steps':100,'save_every':100,'archive_every':0,'eval_every':100,'out':'checkpoints','seed':17}
  for key,value in defaults.items():
   if getattr(a,key) is None:setattr(a,key,tr.get(key,value))
  if tr.get('require_cuda',False) and not torch.cuda.is_available(): raise RuntimeError('This config requires CUDA. Local CPU runs are disabled for the Colab training profile.')
@@ -95,7 +95,11 @@ def main():
   raise RuntimeError(f'No valid checkpoint to resume from; refusing to start fresh:\n{detail}')
  if loaded_from is None and not cands: print(json.dumps({'resume':'none found; starting fresh from step 0','target_steps':a.steps}),flush=True)
  if loaded_from is not None and step>=a.steps and not a.reset_stage:
-  print(json.dumps({'status':'Training complete','steps':step,'target_steps':a.steps}),flush=True); return
+  out_dir=Path(a.out); out_dir.mkdir(parents=True,exist_ok=True); final_path=out_dir/'final.pt'
+  if not final_path.is_file():
+   # Materialize the missing completion artifact from the resumed state.
+   save_checkpoint(final_path,model,opt,cfg,step,tokens,tfp,dataset_version=dataset_version,scaler=scaler,scheduler=sched,epoch=ckpt_epoch,best_validation_loss=best_val,stage=a.stage,dataset_info=dataset_info)
+  print(json.dumps({'status':'Training complete','steps':step,'target_steps':a.steps,'final_checkpoint':str(final_path),'latest_checkpoint':str(out_dir/'latest.pt') if (out_dir/'latest.pt').is_file() else None,'best_checkpoint':str(out_dir/'best.pt') if (out_dir/'best.pt').is_file() else None},ensure_ascii=False),flush=True); return
  if a.reset_stage:
   # The optimizer state is retained, but the new phase starts at its own LR schedule.
   for group,base_lr in zip(opt.param_groups,sched.base_lrs): group['lr']=base_lr*lr_scale(0)
@@ -124,7 +128,7 @@ def main():
   except Exception: return 3.0
  model.train(); opt.zero_grad(set_to_none=True); out=Path(a.out); out.mkdir(parents=True,exist_ok=True)
  data_gb=sum(Path(f).stat().st_size for f in files+val_files)/1024**3
- planned_files=(a.keep_last_checkpoints if a.archive_every else 0)+2
+ planned_files=(a.keep_last_checkpoints if a.archive_every else 0)+3
  print(json.dumps({'disk_free_gib':round(disk_free_gb(),2),'data_gib':round(data_gb,3),'est_ckpt_gib':round(est_ckpt_gb(),2),'planned_ckpt_files':planned_files,'projected_ckpts_gib':round(est_ckpt_gb()*planned_files,2),'limit_gib':19}),flush=True)
  log_path=out/'training.jsonl'
  def emit(record):
@@ -176,7 +180,8 @@ def main():
     save(out/f'checkpoint_step_{step:08d}.pt'); prune_archives()
    save(out/'latest.pt')
    emit({'step':step,'stage':a.stage,'checkpoint_saved':step,'disk_free_gib':round(disk_free_gb(),2),'tokens_seen':tokens})
- # latest.pt is the resumable final state; avoid a second multi-gigabyte copy.
+ # Completion artifacts: latest.pt is the resume pointer, final.pt the completed run.
  if step%a.save_every: save(out/'latest.pt')
- print(json.dumps({'status':'Training complete','steps':step,'target_steps':a.steps,'tokens_seen':tokens,'checkpoints':str(out)}),flush=True)
+ save(out/'final.pt')
+ print(json.dumps({'status':'Training complete','steps':step,'target_steps':a.steps,'tokens_seen':tokens,'checkpoints':str(out),'latest_checkpoint':str(out/'latest.pt'),'final_checkpoint':str(out/'final.pt'),'best_checkpoint':str(out/'best.pt') if (out/'best.pt').is_file() else None,'best_validation_loss':best_val},ensure_ascii=False),flush=True)
 if __name__=='__main__':main()

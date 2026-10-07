@@ -37,70 +37,53 @@ def compute_param_count(config_dict):
     return total
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--config", required=True, help="Path to YAML or JSON config")
-    args = p.parse_args()
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Count parameters for a Lyra model config.")
+    p.add_argument("--config", required=True, help="Path to a JSON config")
+    p.add_argument("--target", type=int, default=None,
+                   help="Optional parameter target to compare the result with")
+    args = p.parse_args(argv)
 
     config_path = Path(args.config)
     if not config_path.exists():
         print(f"Error: config file not found: {config_path}")
-        return
+        return 1
 
-    # Load config
-    if config_path.suffix.lower() == ".yaml" or config_path.name.endswith(".yaml"):
-        import yaml
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8-sig"))
-    else:
-        raw = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    raw = json.loads(config_path.read_text(encoding="utf-8-sig"))
 
-    # Instantiate config object if lyra is available
+    cfg = None
     if HAS_LYRA:
         try:
-            cfg = LyraConfig.from_json(str(config_path)) if config_path.suffix.lower() in ('.json',) else LyraConfig(**{k: v for k, v in raw.items() if k in LyraConfig.__dataclass_fields__})
-            # Actually, let's just use the raw dict with LyraConfig
-            if config_path.suffix.lower() == '.json':
-                cfg = LyraConfig.from_json(str(config_path))
-            else:
-                # For YAML, we need to create LyraConfig from the dict
-                # Extract only the known fields
-                valid_fields = LyraConfig.__dataclass_fields__.keys()
-                filtered = {k: v for k, v in raw.items() if k in valid_fields}
-                cfg = LyraConfig(**filtered)
+            cfg = LyraConfig.from_json(str(config_path))
         except Exception as e:
             print(f"Warning: Could not load LyraConfig, using formula: {e}")
-            cfg = None
-    else:
-        cfg = None
 
-    # Compute using formula
-    actual_count = compute_param_count(raw)
+    # Exact architecture formula (see compute_param_count).
+    formula_count = compute_param_count(raw)
 
-    # Try to instantiate model for actual numel() count
+    # Authoritative number: instantiate the model and count its elements.
     model_count = None
     if cfg is not None:
         try:
-            model = LyraModel(cfg)
-            model_count = model.numel()
-            print(f"Model instantiated successfully")
+            model_count = LyraModel(cfg).parameter_count()
+            print("Model instantiated successfully")
         except Exception as e:
             print(f"Could not instantiate model: {e}")
 
-    target = 10_000_000_000
-    diff = actual_count - target
-
-    print(f"Target parameters: {target:,}")
-    print(f"Actual parameters: {actual_count:,}")
+    print(f"Parameters (formula): {formula_count:,}")
     if model_count is not None:
-        print(f"Actual from model.numel(): {model_count:,}")
-    print(f"Difference: {diff:,} ({diff/target*100:+.2f}%)")
-    print(f"Trainable parameters: {actual_count:,}")  # all params are trainable since no freezing
+        print(f"Parameters (model.parameter_count()): {model_count:,}")
+    if args.target:
+        got = model_count if model_count is not None else formula_count
+        diff = got - args.target
+        print(f"Target: {args.target:,}   Difference: {diff:,} ({diff / args.target * 100:+.2f}%)")
 
     if cfg is not None:
-        print(f"\nArchitecture config:")
+        print("\nArchitecture config:")
         for k, v in cfg.to_dict().items():
             print(f"  {k}: {v}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

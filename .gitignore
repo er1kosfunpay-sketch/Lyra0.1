@@ -1,23 +1,25 @@
-﻿__pycache__/
+﻿# Python
+__pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
+
+# Secrets
 .env
 *.key
 secrets*
-data/raw/
-data/private/
-artifacts/
-checkpoints/
-exports/
+
+# Caches / test output
 .cache/
 .pytest_cache/
-data/cache/
+
+# Generated data, artifacts, run output
 data/raw/
+data/cache/
+data/private/
 data/processed/
 artifacts/
 checkpoints/
 exports/
-logs/*.jsonl
-/Lyra0.1/
+logs/
