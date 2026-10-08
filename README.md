@@ -45,7 +45,7 @@ project/
 ├── tests/                    # pytest suite (single-source guards included)
 ├── kaggle/train_lyra.ipynb   # full Kaggle training notebook
 ├── saturn/                   # Saturn Cloud notebook + VRAM sizing
-├── notebooks/train_colab.ipynb  # Colab training + Google Drive persistence
+├── notebooks/train_colab.ipynb  # Colab training + Google Drive persistence (LOW_STORAGE option)
 ├── docs/ARCHITECTURE_DECISION.md
 ├── checkpoints/              # model checkpoints (auto-generated)
 ├── artifacts/tokenizer/      # tokenizer + token statistics
